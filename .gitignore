@@ -19,6 +19,7 @@ data/*.db
 data/*.sqlite
 data/chroma/
 data/traces/
+data/eval_traces/
 eval_results/
 *.log
 
