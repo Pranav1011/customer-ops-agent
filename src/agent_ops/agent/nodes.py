@@ -22,6 +22,7 @@ from agent_ops.backend.db import session_scope
 from agent_ops.backend.models import Escalation, Ticket
 from agent_ops.config import get_settings
 from agent_ops.llm.base import LLMProvider
+from agent_ops.policy.engine import evaluate_action
 from agent_ops.tools.registry import REGISTRY, ToolContext
 
 _ORDER_RE = re.compile(r"ORD-\d{4,6}", re.IGNORECASE)
@@ -59,6 +60,14 @@ def _drain(provider: LLMProvider, state: AgentState) -> None:
 
 def _total_cost(state: AgentState) -> float:
     return sum(u.get("cost_usd", 0.0) for u in state.get("usage", []))
+
+
+def _do_escalate(state: AgentState, reason: str, rule: str | None = None) -> None:
+    state["escalated"] = True
+    state["escalation_reason"] = reason
+    state["done"] = True
+    state["stop_reason"] = "escalate"
+    _event(state, "escalation", reason=reason, rule=rule)
 
 
 # --------------------------------------------------------------------------- #
@@ -169,15 +178,17 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
         return state
 
     if decision.action == DecisionAction.escalate:
-        state["escalated"] = True
-        state["escalation_reason"] = decision.args.get("reason") or decision.rationale
-        state["done"] = True
-        state["stop_reason"] = "escalate"
-        _event(state, "escalation", reason=state["escalation_reason"])
+        _do_escalate(state, decision.args.get("reason") or decision.rationale)
         return state
 
     # call_tool
     tool = decision.tool or ""
+
+    # escalate_to_human is a control action, not a normal tool execution.
+    if tool == "escalate_to_human":
+        _do_escalate(state, decision.args.get("reason") or decision.rationale)
+        return state
+
     spec = REGISTRY.get(tool)
     if spec is None:
         # Model hallucinated a tool — record and let the loop continue/finish.
@@ -186,6 +197,48 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
             {"tool": tool, "args": decision.args, "result": res}
         )
         _event(state, "tool_call", tool=tool, args=decision.args, result=res)
+    elif spec.kind == "write":
+        # Guardrail 1: confidence gating — a low-confidence write escalates.
+        if decision.confidence < settings.confidence_threshold:
+            _do_escalate(
+                state,
+                f"low confidence ({decision.confidence:.2f}) on write '{tool}'",
+                rule="confidence_gate",
+            )
+            return state
+
+        # Guardrail 2: the policy engine gates every write BEFORE it executes.
+        policy = evaluate_action(
+            tool,
+            decision.args,
+            authorized_customer=state.get("customer_id"),
+            identity_verified=state.get("identity_verified"),
+        )
+        _event(
+            state, "guard", tool=tool, effect=policy.effect, rule=policy.rule, reason=policy.reason
+        )
+
+        if policy.effect == "escalate":
+            _do_escalate(state, policy.reason, rule=policy.rule)
+            return state
+        if policy.effect == "block":
+            res = {
+                "ok": False,
+                "data": {},
+                "error": f"policy_blocked[{policy.rule}]: {policy.reason}",
+            }
+            state.setdefault("scratchpad", []).append(
+                {"tool": tool, "args": decision.args, "result": res}
+            )
+            _event(state, "tool_call", tool=tool, args=decision.args, result=res, blocked=True)
+        else:
+            result = REGISTRY.run(tool, decision.args, _ctx(state))
+            state.setdefault("scratchpad", []).append(
+                {"tool": tool, "args": decision.args, "result": result.to_dict()}
+            )
+            if result.ok:
+                state.setdefault("actions_taken", []).append(tool)
+            _event(state, "tool_call", tool=tool, args=decision.args, result=result.to_dict())
     else:
         result = REGISTRY.run(tool, decision.args, _ctx(state))
         state.setdefault("scratchpad", []).append(

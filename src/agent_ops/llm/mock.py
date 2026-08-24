@@ -209,6 +209,11 @@ class MockProvider(LLMProvider):
         intent = view.get("intent")
         handler = {
             Intent.order_status.value: self._decide_order_status,
+            Intent.refund.value: self._decide_refund,
+            Intent.damaged_item.value: self._decide_refund,  # damaged -> full refund path
+            Intent.double_charge.value: self._decide_double_charge,
+            Intent.address_change.value: self._decide_address,
+            Intent.cancel_subscription.value: self._decide_cancel,
         }.get(intent, self._decide_unimplemented)
         decision = handler(view)
         self._sim("reasoner", str(view)[:2000], decision.model_dump_json())
@@ -245,6 +250,144 @@ class MockProvider(LLMProvider):
             action=DecisionAction.finish, rationale="Best-effort summary from available data."
         )
 
+    def _decide_refund(self, view: dict[str, Any]) -> Decision:
+        """Refund / damaged-item path: verify the order, then refund the
+        refundable remaining. Policy gates the amount (auto vs escalate)."""
+        order_id = view.get("order_id")
+        reason = (
+            "damaged item"
+            if view.get("intent") == Intent.damaged_item.value
+            else "customer refund request"
+        )
+
+        if not order_id:
+            return Decision(
+                action=DecisionAction.escalate,
+                args={"reason": "No order id provided; cannot verify what to refund."},
+                rationale="Ambiguous refund — need an order id.",
+            )
+        if not self._scratch(view, "get_order"):
+            return Decision(
+                action=DecisionAction.call_tool,
+                tool="get_order",
+                args={"order_id": order_id},
+                rationale="Verify the order and amount paid before refunding.",
+            )
+        order = self._last_ok(view, "get_order")
+        if not order:
+            return Decision(
+                action=DecisionAction.escalate,
+                args={"reason": f"Could not locate order {order_id} to refund."},
+                rationale="Order not found — escalate.",
+            )
+        if not self._scratch(view, "issue_refund"):
+            remaining = round(
+                float(order["total"]) - float(order.get("refunded_amount", 0) or 0), 2
+            )
+            return Decision(
+                action=DecisionAction.call_tool,
+                tool="issue_refund",
+                args={"order_id": order_id, "amount": remaining, "reason": reason},
+                rationale="Issue a refund for the refundable remaining amount.",
+            )
+        if self._last_ok(view, "issue_refund"):
+            return Decision(
+                action=DecisionAction.finish, rationale="Refund issued; confirm to the customer."
+            )
+        return Decision(
+            action=DecisionAction.escalate,
+            args={"reason": "Refund could not be completed automatically."},
+            rationale="Refund attempt failed or was blocked — escalate.",
+        )
+
+    def _decide_double_charge(self, view: dict[str, Any]) -> Decision:
+        customer_id = view.get("customer_id")
+        order_id = view.get("order_id")
+        if not self._scratch(view, "get_payment_history"):
+            args = {"customer_id": customer_id}
+            if order_id:
+                args["order_id"] = order_id
+            return Decision(
+                action=DecisionAction.call_tool,
+                tool="get_payment_history",
+                args=args,
+                rationale="Inspect payments for a duplicate charge.",
+            )
+        pays = (self._last_ok(view, "get_payment_history") or {}).get("payments", [])
+        dup = next(
+            (p for p in pays if p.get("is_duplicate") and p.get("status") == "succeeded"), None
+        )
+        if dup and not self._scratch(view, "issue_refund"):
+            return Decision(
+                action=DecisionAction.call_tool,
+                tool="issue_refund",
+                args={
+                    "order_id": dup["order_id"],
+                    "amount": dup["amount"],
+                    "reason": "duplicate charge refund",
+                },
+                rationale="Refund the duplicate payment.",
+            )
+        if self._scratch(view, "issue_refund"):
+            if self._last_ok(view, "issue_refund"):
+                return Decision(action=DecisionAction.finish, rationale="Duplicate refunded.")
+            return Decision(
+                action=DecisionAction.escalate,
+                args={"reason": "Duplicate-charge refund could not be completed."},
+                rationale="Refund failed/blocked — escalate.",
+            )
+        # No duplicate found — nothing to refund.
+        return Decision(action=DecisionAction.finish, rationale="No duplicate charge found.")
+
+    def _decide_address(self, view: dict[str, Any]) -> Decision:
+        order_id = view.get("order_id")
+        if not order_id:
+            return Decision(
+                action=DecisionAction.escalate,
+                args={"reason": "No order id provided for the address change."},
+                rationale="Need an order id.",
+            )
+        if not self._scratch(view, "update_shipping_address"):
+            # Propose the change; the policy engine enforces identity + that the
+            # order hasn't shipped. Placeholder address stands in for the parsed one.
+            address = {
+                "line1": "Updated address per customer request",
+                "city": "Springfield",
+                "region": "IL",
+                "postal_code": "62701",
+                "country": "US",
+            }
+            return Decision(
+                action=DecisionAction.call_tool,
+                tool="update_shipping_address",
+                args={"order_id": order_id, "address": address},
+                rationale="Attempt the address change (policy will gate identity/shipment).",
+            )
+        if self._last_ok(view, "update_shipping_address"):
+            return Decision(action=DecisionAction.finish, rationale="Address updated.")
+        return Decision(
+            action=DecisionAction.escalate,
+            args={"reason": "Address change could not be completed (order may have shipped)."},
+            rationale="Blocked — escalate.",
+        )
+
+    def _decide_cancel(self, view: dict[str, Any]) -> Decision:
+        customer_id = view.get("customer_id")
+        if not self._scratch(view, "get_subscription"):
+            return Decision(
+                action=DecisionAction.call_tool,
+                tool="get_subscription",
+                args={"customer_id": customer_id},
+                rationale="Look up the subscription before cancelling.",
+            )
+        # Propose the cancellation; policy always routes it to a human.
+        return Decision(
+            action=DecisionAction.call_tool,
+            tool="cancel_subscription",
+            args={"customer_id": customer_id},
+            rationale="Cancellation requested — policy will require human confirmation.",
+        )
+
     def _decide_unimplemented(self, view: dict[str, Any]) -> Decision:
         # Phase 1: non-order intents are safely escalated. Phase 2 implements them.
         return Decision(
@@ -260,20 +403,44 @@ class MockProvider(LLMProvider):
     # --- compose reply ---
     def compose_reply(self, view: dict[str, Any]) -> str:
         intent = view.get("intent")
-        if intent == Intent.order_status.value:
-            reply = self._reply_order_status(view)
-        elif view.get("escalated"):
+        if view.get("escalated"):
             reply = (
                 "Thanks for reaching out. I've routed your request to a specialist on our "
                 "team who will follow up with you shortly. We appreciate your patience."
             )
+        elif intent == Intent.order_status.value:
+            reply = self._reply_order_status(view)
         else:
-            reply = (
-                "Thanks for contacting Aurora. I've reviewed your request and a member of our "
-                "team will follow up with the details shortly."
-            )
+            reply = self._reply_action(view)
         self._sim("reasoner", str(view)[:2000], reply)
         return reply
+
+    def _reply_action(self, view: dict[str, Any]) -> str:
+        refund = self._last_ok(view, "issue_refund")
+        if refund:
+            return (
+                f"You're all set — I've issued a refund of ${float(refund['amount']):.2f} to your "
+                f"original payment method for order {refund['order_id']}. It typically posts within "
+                "5–10 business days. Apologies for the inconvenience, and thanks for your patience."
+            )
+        addr = self._last_ok(view, "update_shipping_address")
+        if addr:
+            a = addr["shipping_address"]
+            return (
+                f"Done — I've updated the shipping address on order {addr['order_id']} to "
+                f"{a['line1']}, {a['city']}, {a['region']} {a['postal_code']}. Let me know if there's "
+                "anything else I can help with."
+            )
+        if view.get("intent") == Intent.double_charge.value:
+            return (
+                "I took a close look at the payments on your account and didn't find a duplicate "
+                "charge for that order. If you're seeing something unexpected on your statement, "
+                "send me the date and amount and I'll investigate further."
+            )
+        return (
+            "Thanks for contacting Aurora. I've reviewed your request and a member of our team "
+            "will follow up with the details shortly."
+        )
 
     def _reply_order_status(self, view: dict[str, Any]) -> str:
         order = self._last_ok(view, "get_order")

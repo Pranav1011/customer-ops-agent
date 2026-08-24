@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     max_iterations: int = Field(default=8)
     cost_ceiling_usd: float = Field(default=0.50)
     refund_approval_threshold: float = Field(default=100.0)
+    credit_direct_limit: float = Field(default=25.0)  # goodwill credit auto-apply ceiling
+    confidence_threshold: float = Field(default=0.6)  # below this, a write escalates
 
     def _resolve(self, p: str) -> Path:
         path = Path(p)

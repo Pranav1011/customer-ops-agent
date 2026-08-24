@@ -57,6 +57,19 @@ stores as tables, read on intake and written on resolve.
 (short-term / episodic / semantic / procedural) is demonstrated explicitly in our own
 code, which reads better in an interview than delegating it to a black box.
 
+### D8 — Guardrails enforced at a single choke point in the agent loop
+**Chose:** A deterministic, LLM-free policy engine (`policy/engine.py`) called from the
+agent's `act` node *before* any write tool executes; it returns allow / escalate / block
+with the rule that fired. The write tools also re-check their own hard invariants as
+defense in depth. Thresholds: refunds > $100 escalate; goodwill credit > $25 escalates;
+subscription cancellations always escalate; address/CRM changes require verified identity;
+address changes blocked once shipped; no action outside the ticket's customer; refund ≤
+refundable remaining. Confidence < 0.6 on a write escalates.
+**Rejected:** Trusting the model to self-police, or gating inside each tool only.
+**Why:** A single, testable choke point can't be bypassed by a clever prompt, is trivial
+to unit-test exhaustively (tests/test_policy.py), and keeps the safety logic auditable in
+one place. Escalation is modeled as a *successful* outcome, not a failure.
+
 ### D7 — Domain skin: "Aurora", a DTC e-commerce + subscription brand
 **Chose:** A thin e-commerce/subscription skin over a domain-agnostic core (~90% of the
 code is domain-neutral; e-commerce assumptions live only in the tool/data/seed layer).
