@@ -23,6 +23,10 @@ class AgentState(TypedDict, total=False):
     intent_confidence: float
     plan: dict[str, Any]
 
+    # Long-term memory recalled at intake (episodic + semantic).
+    memory: dict[str, Any]
+    compactions: int
+
     # Tool loop working memory.
     scratchpad: list[dict[str, Any]]  # [{tool, args, result}]
     iterations: int
@@ -58,6 +62,8 @@ def new_state(
         intent="",
         intent_confidence=0.0,
         plan={},
+        memory={},
+        compactions=0,
         scratchpad=[],
         iterations=0,
         identity_verified=None,

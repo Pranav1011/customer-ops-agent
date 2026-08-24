@@ -131,6 +131,13 @@ def get_trace(run_id: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@router.get("/customers/{customer_id}/memory")
+def get_customer_memory(customer_id: str) -> dict[str, Any]:
+    from agent_ops.memory.long_term import load_profile
+
+    return load_profile(customer_id)
+
+
 @router.get("/escalations")
 def list_escalations(status: str = "open", limit: int = 50) -> dict[str, Any]:
     with session_scope() as s:

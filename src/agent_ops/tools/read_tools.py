@@ -251,3 +251,20 @@ class SearchKBArgs(BaseModel):
 def search_knowledge_base(ctx: ToolContext, args: SearchKBArgs) -> ToolResult:
     hits = kb.search(args.query, k=args.k)
     return ToolResult(ok=True, data={"results": hits, "count": len(hits)})
+
+
+# --- get_customer_memory ---
+class GetMemoryArgs(BaseModel):
+    customer_id: str = Field(description="Customer id, e.g. CUST-00042")
+
+
+@register(
+    name="get_customer_memory",
+    description="Recall long-term memory for a customer: durable semantic facts (tier, VIP, preferred channel) and recent past resolutions (episodic).",
+    kind="read",
+    args_model=GetMemoryArgs,
+)
+def get_customer_memory(ctx: ToolContext, args: GetMemoryArgs) -> ToolResult:
+    from agent_ops.memory.long_term import recall
+
+    return ToolResult(ok=True, data=recall(args.customer_id))

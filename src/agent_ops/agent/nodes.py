@@ -22,6 +22,8 @@ from agent_ops.backend.db import session_scope
 from agent_ops.backend.models import Escalation, Ticket
 from agent_ops.config import get_settings
 from agent_ops.llm.base import LLMProvider
+from agent_ops.memory.long_term import recall, record_resolution
+from agent_ops.memory.short_term import compact_scratchpad
 from agent_ops.policy.engine import evaluate_action
 from agent_ops.tools.registry import REGISTRY, ToolContext
 
@@ -107,6 +109,11 @@ def intake(state: AgentState, config: RunnableConfig) -> AgentState:
             result=res.to_dict(),
         )
 
+        # Long-term memory recall (episodic + semantic) injected as context.
+        mem = recall(state["customer_id"])
+        state["memory"] = mem
+        _event(state, "memory_recall", memory=mem)
+
     _event(
         state,
         "intent",
@@ -148,6 +155,7 @@ def _view(state: AgentState) -> dict[str, Any]:
         "customer_id": state.get("customer_id"),
         "order_id": state.get("order_id"),
         "identity_verified": state.get("identity_verified"),
+        "memory": state.get("memory", {}),
         "plan": state.get("plan"),
         "scratchpad": state.get("scratchpad", []),
         "iterations": state.get("iterations", 0),
@@ -158,6 +166,14 @@ def _view(state: AgentState) -> dict[str, Any]:
 def act(state: AgentState, config: RunnableConfig) -> AgentState:
     provider = _provider(config)
     settings = get_settings()
+
+    # Short-term memory compaction: keep the context handed to the model small
+    # on long threads without losing which tools ran and whether they succeeded.
+    compacted, n = compact_scratchpad(state.get("scratchpad", []))
+    if n:
+        state["scratchpad"] = compacted
+        state["compactions"] = state.get("compactions", 0) + 1
+        _event(state, "compaction", entries_compacted=n)
 
     decision: Decision = provider.decide(_view(state))
     _drain(provider, state)
@@ -297,6 +313,21 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
     _event(state, "reply", status=status, customer_reply=reply)
 
     _persist(state, status, reply)
+
+    # Write an episodic memory for this customer (updates the semantic profile).
+    if state.get("customer_id"):
+        entry = {
+            "run_id": state["run_id"],
+            "ticket_id": state.get("ticket_id"),
+            "intent": state.get("intent"),
+            "status": status,
+            "ts": datetime.now(UTC).isoformat(),
+            "actions": state.get("actions_taken", []),
+            "summary": reply[:160],
+        }
+        record_resolution(state["customer_id"], entry)
+        _event(state, "memory_write", entry=entry)
+
     return state
 
 
