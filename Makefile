@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 UV := uv
 
-.PHONY: help install seed dev eval test lint fmt clean reset
+.PHONY: help install seed dev eval test lint fmt clean reset ui ui-install
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -15,6 +15,12 @@ seed: ## Generate the mock backend: SQLite data + Chroma KB
 
 dev: ## Run the FastAPI service (http://127.0.0.1:8000, docs at /docs)
 	$(UV) run uvicorn agent_ops.api.main:app --reload --host 127.0.0.1 --port 8000
+
+ui-install: ## Install the frontend console dependencies
+	cd frontend && npm install
+
+ui: ## Run the frontend console (http://localhost:5173) — needs `make dev` running too
+	cd frontend && npm run dev -- --port 5173 --strictPort
 
 eval: ## Run the eval harness over the golden dataset and print the report
 	$(UV) run python -m agent_ops.eval.harness

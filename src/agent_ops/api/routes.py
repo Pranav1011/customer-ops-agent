@@ -70,6 +70,29 @@ def submit_ticket(payload: SubmitTicket) -> TicketResult:
     )
 
 
+@router.post("/tickets/{ticket_id}/resolve", response_model=TicketResult)
+def resolve_ticket(ticket_id: str) -> TicketResult:
+    """Run the agent on an existing (e.g. seeded) ticket so the queue is
+    interactive from the console."""
+    with session_scope() as s:
+        t = s.get(Ticket, ticket_id)
+        if t is None:
+            raise HTTPException(404, f"ticket not found: {ticket_id}")
+        body, customer_id = t.body, t.customer_id
+
+    result = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id)
+    return TicketResult(
+        ticket_id=ticket_id,
+        run_id=result["run_id"],
+        intent=result["intent"],
+        status=result["status"],
+        escalated=result["escalated"],
+        customer_reply=result["customer_reply"],
+        escalation_reason=result["escalation_reason"],
+        summary=result["summary"],
+    )
+
+
 @router.get("/tickets/{ticket_id}")
 def get_ticket(ticket_id: str) -> dict[str, Any]:
     with session_scope() as s:

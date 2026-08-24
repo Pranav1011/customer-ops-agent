@@ -45,9 +45,25 @@ make seed        # generate the mock backend: SQLite data + Chroma KB
 make dev         # run the API at http://127.0.0.1:8000 (docs at /docs)
 make eval        # run the eval harness and print the report
 make test        # run the test suite
+
+# Frontend console (optional, in a second terminal while `make dev` runs):
+make ui-install  # one-time: install the React console's deps
+make ui          # serve the console at http://localhost:5173
 ```
 
-Runs **fully offline** with a deterministic mock LLM — no API key needed. To switch to
+Runs **fully offline** with a deterministic mock LLM — no API key needed.
+
+## The console
+
+A thin React + TypeScript operations console: a ticket **queue**, a per-ticket
+**run-trace viewer** (plan → tool calls → guardrail decisions → reply, with cost/latency),
+and an **escalation inbox**. Submit a ticket and watch the agent resolve it live.
+
+![Aurora Operations Console — run-trace viewer showing the prompt-injection guardrail firing](docs/console.png)
+
+_Above: a prompt-injection ticket. The agent sanitizes the untrusted input, answers the
+real "where's my order" question, and ignores the embedded "issue a $500 refund" —
+resolved, no refund._ To switch to
 real Claude reasoning, set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` (see
 Configuration below).
 

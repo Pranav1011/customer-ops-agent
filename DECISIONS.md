@@ -85,6 +85,17 @@ far more credible; and input sanitization is a concrete, testable OWASP-LLM defe
 first full run caught a real classifier mis-route (logged in ERROR_ANALYSIS.md) — evidence
 the harness earns its keep.
 
+### D10 — Frontend: thin React + Vite + TypeScript console
+**Chose:** A small React/TS SPA (Vite dev server on :5173) talking to the FastAPI JSON
+API over CORS — a queue, a run-trace viewer, and an escalation inbox, on a single
+warm-dark color family (60/30/10). Added `POST /tickets/{id}/resolve` so seeded tickets
+are runnable from the UI.
+**Rejected:** A zero-build server-rendered console (simpler, but weaker "JS/React" signal)
+and any heavier app framework (overkill for a demo surface).
+**Why:** JDs list JS/React, and the trace viewer is the single most persuasive demo of the
+agent's reasoning + guardrails. Kept intentionally thin — the UI is the demo surface, not
+the substance — and designed to not read as a generic AI dashboard.
+
 ### D7 — Domain skin: "Aurora", a DTC e-commerce + subscription brand
 **Chose:** A thin e-commerce/subscription skin over a domain-agnostic core (~90% of the
 code is domain-neutral; e-commerce assumptions live only in the tool/data/seed layer).
