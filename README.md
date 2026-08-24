@@ -53,6 +53,29 @@ make ui          # serve the console at http://localhost:5173
 
 Runs **fully offline** with a deterministic mock LLM — no API key needed.
 
+### Three interchangeable "brains"
+
+The agent's reasoning sits behind one interface, so you swap the brain with a single env
+var — the loop, tools, guardrails, memory, tracing, evals, and UI never change:
+
+| `LLM_PROVIDER` | Reasoning | Cost | Needs |
+|---|---|---|---|
+| `mock` (default) | deterministic rules — reproducible, instant, great for CI/evals | $0 | nothing |
+| **`ollama`** | a **real local LLM** (llama3.1:8b) genuinely reasoning | $0 | [Ollama](https://ollama.com) running |
+| `anthropic` | real Claude (Sonnet/Haiku) | API $ | `ANTHROPIC_API_KEY` |
+
+**Run it as a real (free) LLM agent** on a local model — no key, no cost:
+
+```bash
+ollama pull llama3.1:8b            # once
+make dev-ollama                    # API now reasons with a real local LLM
+```
+
+The trace's intake / plan / decision steps become the model *actually reasoning* over the
+ticket and tool results — not keyword rules — while the guardrails still gate every
+action. (Local 8B inference is ~30–60s per ticket; the mock brain stays the default for
+tests and the eval sweep because it's instant and reproducible.)
+
 ## The console
 
 A thin React + TypeScript operations console: a ticket **queue**, a per-ticket
@@ -63,9 +86,7 @@ and an **escalation inbox**. Submit a ticket and watch the agent resolve it live
 
 _Above: a prompt-injection ticket. The agent sanitizes the untrusted input, answers the
 real "where's my order" question, and ignores the embedded "issue a $500 refund" —
-resolved, no refund._ To switch to
-real Claude reasoning, set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` (see
-Configuration below).
+resolved, no refund._
 
 ## Configuration
 
@@ -74,11 +95,13 @@ sensible defaults, so `.env` is optional. Recognized variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_PROVIDER` | `mock` | `mock` (offline, deterministic) or `anthropic` (real) |
+| `LLM_PROVIDER` | `mock` | `mock` (rules), `ollama` (local LLM), or `anthropic` (Claude) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | local Ollama server |
+| `OLLAMA_MODEL` | `llama3.1:8b` | local model used when `LLM_PROVIDER=ollama` |
 | `ANTHROPIC_API_KEY` | — | required only when `LLM_PROVIDER=anthropic` |
-| `MODEL_CLASSIFIER` | `claude-haiku-4-5-20251001` | intent classification (cheap/fast) |
-| `MODEL_REASONER` | `claude-sonnet-5` | planning + reasoning |
-| `MODEL_JUDGE` | `claude-sonnet-5` | LLM-as-judge in evals |
+| `MODEL_CLASSIFIER` | `claude-haiku-4-5-20251001` | Claude intent classification (cheap/fast) |
+| `MODEL_REASONER` | `claude-sonnet-5` | Claude planning + reasoning |
+| `MODEL_JUDGE` | `claude-sonnet-5` | Claude LLM-as-judge in evals |
 | `DB_PATH` | `data/aurora.db` | SQLite file |
 | `CHROMA_PATH` | `data/chroma` | vector KB store |
 | `TRACE_DIR` | `data/traces` | per-run JSON traces |

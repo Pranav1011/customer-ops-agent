@@ -23,10 +23,16 @@ PRICES: dict[str, tuple[float, float]] = {
     "opus": (15.0, 75.0),
 }
 
+# Local models (Ollama) run for free — count tokens/latency, but $0.
+_LOCAL_MODEL_HINTS = ("llama", "mistral", "qwen", "phi", "deepseek", "neural", "gemma", "ollama")
+
 
 def price_for(model: str) -> tuple[float, float]:
+    m = model.lower()
+    if any(h in m for h in _LOCAL_MODEL_HINTS):
+        return (0.0, 0.0)
     for key, price in PRICES.items():
-        if key in model:
+        if key in m:
             return price
     return PRICES["sonnet"]
 

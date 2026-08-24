@@ -23,11 +23,15 @@ class Settings(BaseSettings):
     )
 
     # --- LLM ---
-    llm_provider: str = Field(default="mock")  # "mock" | "anthropic"
+    llm_provider: str = Field(default="mock")  # "mock" | "anthropic" | "ollama"
     anthropic_api_key: str = Field(default="")
     model_classifier: str = Field(default="claude-haiku-4-5-20251001")
     model_reasoner: str = Field(default="claude-sonnet-5")
     model_judge: str = Field(default="claude-sonnet-5")
+
+    # Local Ollama (free, offline reasoning). Used when llm_provider=ollama.
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    ollama_model: str = Field(default="llama3.1:8b")
 
     # --- Storage (relative paths are resolved against the repo root) ---
     db_path: str = Field(default="data/aurora.db")

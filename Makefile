@@ -16,6 +16,9 @@ seed: ## Generate the mock backend: SQLite data + Chroma KB
 dev: ## Run the FastAPI service (http://127.0.0.1:8000, docs at /docs)
 	$(UV) run uvicorn agent_ops.api.main:app --reload --host 127.0.0.1 --port 8000
 
+dev-ollama: ## Run the API with a real local LLM brain (needs Ollama + llama3.1:8b)
+	LLM_PROVIDER=ollama $(UV) run uvicorn agent_ops.api.main:app --host 127.0.0.1 --port 8000
+
 ui-install: ## Install the frontend console dependencies
 	cd frontend && npm install
 

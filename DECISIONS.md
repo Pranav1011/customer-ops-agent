@@ -85,6 +85,22 @@ far more credible; and input sanitization is a concrete, testable OWASP-LLM defe
 first full run caught a real classifier mis-route (logged in ERROR_ANALYSIS.md) — evidence
 the harness earns its keep.
 
+### D11 — Real LLM reasoning via local Ollama (free), not just Claude
+**Chose:** A third provider, `OllamaProvider` (`LLM_PROVIDER=ollama`), that drives the
+agent's reasoning with a local model (default `llama3.1:8b`) through the same
+`PromptedProvider` base as the Claude provider. Refactored the shared prompt/JSON/retry
+logic into `llm/prompted.py` so Claude and Ollama don't duplicate it, and added
+repair-retry + safe fallbacks (fail toward escalation) for when a small local model emits
+malformed JSON.
+**Rejected:** Requiring a paid Claude key to run as a "real" agent; wiring Ollama's
+native tool-calling (varies by model — prompt-based JSON is uniform and robust).
+**Why:** It makes the project a genuine LLM agent — the model actually classifies,
+plans, chooses tools, and writes replies — for **$0, fully local, no key**. Verified live:
+a WISMO ticket resolves grounded in real order data, and a $172 refund is still escalated
+by the deterministic policy engine (guardrails hold regardless of the model). The mock
+brain stays the default for tests/CI/evals because it's instant and reproducible; local
+8B inference is ~30–60s per ticket.
+
 ### D10 — Frontend: thin React + Vite + TypeScript console
 **Chose:** A small React/TS SPA (Vite dev server on :5173) talking to the FastAPI JSON
 API over CORS — a queue, a run-trace viewer, and an escalation inbox, on a single

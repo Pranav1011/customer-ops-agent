@@ -16,6 +16,10 @@ def get_provider() -> LLMProvider:
         from agent_ops.llm.anthropic import AnthropicProvider
 
         return AnthropicProvider()
+    if provider == "ollama":
+        from agent_ops.llm.ollama import OllamaProvider
+
+        return OllamaProvider()
     from agent_ops.llm.mock import MockProvider
 
     return MockProvider()
