@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Env / secrets
+.env
+*.pem
+*.key
+
+# Local data / artifacts
+data/*.db
+data/*.sqlite
+data/chroma/
+data/traces/
+eval_results/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Node (frontend, Phase 6)
+node_modules/
+frontend/dist/
