@@ -45,9 +45,14 @@ _INTENT_RULES: list[tuple[Intent, tuple[str, ...]]] = [
     (
         Intent.address_change,
         (
+            "shipping address",
+            "delivery address",
             "change my address",
             "change shipping",
+            "change the shipping",
             "update address",
+            "update the shipping",
+            "update my shipping",
             "wrong address",
             "ship to my new",
             "moved",
@@ -481,32 +486,36 @@ class MockProvider(LLMProvider):
         return f"Your order {oid} is currently in '{status}' status. Let me know if you'd like more detail."
 
     # --- judge (Phase 4) ---
-    def judge(self, rubric: str, content: str, options: list[str]) -> JudgeResult:
-        # Deterministic heuristic judge for offline runs: rewards grounded,
-        # non-empty, on-policy replies. The real study (position bias, etc.)
-        # activates with the Anthropic provider.
-        text = content.lower()
-        score = 0.5
-        if len(content) > 40:
+    def _quality(self, reply: str) -> float:
+        """Deterministic heuristic quality score for offline runs. The real
+        model-based judge (with the position-bias study) activates with the
+        Anthropic provider."""
+        text = reply.lower()
+        score = 0.4
+        if len(reply) > 60:
             score += 0.2
-        if any(
-            tok in text
-            for tok in (
-                "order",
-                "refund",
-                "subscription",
-                "address",
-                "specialist",
-                "sorry",
-                "thanks",
-            )
-        ):
+        if any(tok in text for tok in ("order", "refund", "subscription", "address", "specialist")):
             score += 0.2
-        if "ord-" in text or "$" in content:
+        if any(tok in text for tok in ("sorry", "thanks", "apolog", "appreciate", "happy to")):
             score += 0.1
-        score = min(1.0, score)
-        verdict = options[0] if (options and score >= 0.6) else (options[-1] if options else "fail")
-        self._sim("judge", rubric + content, verdict)
+        if "ord-" in text or "$" in reply:
+            score += 0.1
+        return min(1.0, score)
+
+    def score_reply(self, rubric: str, reply: str) -> JudgeResult:
+        score = self._quality(reply)
+        verdict = "pass" if score >= 0.6 else "fail"
+        self._sim("judge", rubric + reply, verdict)
         return JudgeResult(
             score=round(score, 3), verdict=verdict, rationale="heuristic offline judge"
+        )
+
+    def compare(self, rubric: str, reply_a: str, reply_b: str) -> tuple[str, JudgeResult]:
+        sa, sb = self._quality(reply_a), self._quality(reply_b)
+        # Decision is by content quality, not position -> no position bias by
+        # construction. Ties resolve to A (a measurable, mild tie-break bias).
+        winner = "A" if sa >= sb else "B"
+        self._sim("judge", rubric + reply_a + reply_b, winner)
+        return winner, JudgeResult(
+            score=round(max(sa, sb), 3), verdict=winner, rationale="heuristic pairwise"
         )

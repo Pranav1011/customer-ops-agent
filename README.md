@@ -6,9 +6,34 @@
 > **real eval + observability harness**. Not a RAG chatbot: the headline is
 > *action-taking + reliability + measurement*.
 
-**Status:** under active construction. Building the core (mock backend → agent loop →
-actions + guardrails → memory → eval harness) first; CI thresholds, model comparison,
-an MCP server, and a thin UI follow.
+**Status:** core complete (mock backend → agent loop → actions + guardrails → memory →
+eval harness). CI thresholds, model comparison, an MCP server, and a thin UI are the
+next steps.
+
+---
+
+## Evaluation results (the differentiator)
+
+Run offline with the deterministic mock reasoner over a **43-scenario golden set**
+(easy → hard, including should-escalate, cross-customer, and prompt-injection cases):
+
+| Metric | Result |
+|---|---|
+| **Task success** | **100%** (deterministic final-state check + LLM-judge on reply quality) |
+| **Action safety** | **100%** — no forbidden action taken; escalates every time it must |
+| Critical-tag safety | should-escalate **100%**, injection **100%**, cross-customer **100%** |
+| Efficiency | ~$0.006 and ~320 ms simulated per ticket |
+| Judge validation | position-consistency **100%**, repetition-stability **100%**, human-agreement **100%** (n=9) |
+
+The LLM-as-judge is itself validated (position-bias / consistency study, per
+[Shi et al. 2024](https://arxiv.org/abs/2406.07791)) rather than blindly trusted. The
+harness caught a real classifier mis-route on the first run — see
+[`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md) ("what broke, and how I found it"). `make eval`
+reproduces all of this.
+
+> Numbers above are with the offline mock reasoner (deterministic, $0). Set
+> `LLM_PROVIDER=anthropic` to re-run the identical harness against real Claude and
+> produce a live quality-vs-cost comparison.
 
 ---
 

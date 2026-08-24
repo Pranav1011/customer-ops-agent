@@ -1,0 +1,258 @@
+{
+  "run_id": "0d50e21a965d",
+  "ticket_id": "dc-large",
+  "customer_id": "CUST-C02",
+  "intent": "double_charge",
+  "request_text": "You charged me twice on order ORD-0301, fix it.",
+  "status": "escalated",
+  "created_at": "2026-08-24T22:34:39.806524+00:00",
+  "plan": {
+    "intent": "double_charge",
+    "summary": "Resolve a double_charge request following Aurora policy.",
+    "steps": [
+      {
+        "description": "Inspect payment history for a duplicate",
+        "tool": "get_payment_history",
+        "expected_outcome": ""
+      },
+      {
+        "description": "Refund the duplicate payment",
+        "tool": "issue_refund",
+        "expected_outcome": ""
+      }
+    ],
+    "risk_level": "medium",
+    "requires_identity": false
+  },
+  "events": [
+    {
+      "seq": 0,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:34:39.801722+00:00",
+      "tool": "get_customer",
+      "args": {
+        "customer_id": "CUST-C02"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "customer_id": "CUST-C02",
+          "name": "Eval Customer",
+          "email": "cust-c02@example.com",
+          "tier": "standard",
+          "tenure_days": 200,
+          "prefers_channel": "email",
+          "identity_verified": true
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 1,
+      "type": "memory_recall",
+      "ts": "2026-08-24T22:34:39.801984+00:00",
+      "memory": {
+        "semantic": {},
+        "recent_resolutions": [],
+        "interaction_count": 0,
+        "returning_customer": false
+      }
+    },
+    {
+      "seq": 2,
+      "type": "intent",
+      "ts": "2026-08-24T22:34:39.801989+00:00",
+      "intent": "double_charge",
+      "confidence": 0.9,
+      "order_id": "ORD-0301",
+      "rationale": "keyword match"
+    },
+    {
+      "seq": 3,
+      "type": "plan",
+      "ts": "2026-08-24T22:34:39.802304+00:00",
+      "plan": {
+        "intent": "double_charge",
+        "summary": "Resolve a double_charge request following Aurora policy.",
+        "steps": [
+          {
+            "description": "Inspect payment history for a duplicate",
+            "tool": "get_payment_history",
+            "expected_outcome": ""
+          },
+          {
+            "description": "Refund the duplicate payment",
+            "tool": "issue_refund",
+            "expected_outcome": ""
+          }
+        ],
+        "risk_level": "medium",
+        "requires_identity": false
+      }
+    },
+    {
+      "seq": 4,
+      "type": "decision",
+      "ts": "2026-08-24T22:34:39.802713+00:00",
+      "action": "call_tool",
+      "tool": "get_payment_history",
+      "args": {
+        "customer_id": "CUST-C02",
+        "order_id": "ORD-0301"
+      },
+      "rationale": "Inspect payments for a duplicate charge.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 5,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:34:39.803209+00:00",
+      "tool": "get_payment_history",
+      "args": {
+        "customer_id": "CUST-C02",
+        "order_id": "ORD-0301"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "payments": [
+            {
+              "payment_id": "PAY-C3",
+              "customer_id": "CUST-C02",
+              "order_id": "ORD-0301",
+              "amount": 180.0,
+              "status": "succeeded",
+              "method": "card",
+              "is_duplicate": false,
+              "created_at": "2026-08-24T22:34:39.799864"
+            },
+            {
+              "payment_id": "PAY-C4",
+              "customer_id": "CUST-C02",
+              "order_id": "ORD-0301",
+              "amount": 180.0,
+              "status": "succeeded",
+              "method": "card",
+              "is_duplicate": true,
+              "created_at": "2026-08-24T22:34:39.799899"
+            }
+          ],
+          "count": 2
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 6,
+      "type": "decision",
+      "ts": "2026-08-24T22:34:39.803607+00:00",
+      "action": "call_tool",
+      "tool": "issue_refund",
+      "args": {
+        "order_id": "ORD-0301",
+        "amount": 180.0,
+        "reason": "duplicate charge refund"
+      },
+      "rationale": "Refund the duplicate payment.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 7,
+      "type": "guard",
+      "ts": "2026-08-24T22:34:39.804086+00:00",
+      "tool": "issue_refund",
+      "effect": "escalate",
+      "rule": "refund_over_threshold",
+      "reason": "refund 180.0 exceeds the $100 auto-approval threshold"
+    },
+    {
+      "seq": 8,
+      "type": "escalation",
+      "ts": "2026-08-24T22:34:39.804089+00:00",
+      "reason": "refund 180.0 exceeds the $100 auto-approval threshold",
+      "rule": "refund_over_threshold"
+    },
+    {
+      "seq": 9,
+      "type": "reply",
+      "ts": "2026-08-24T22:34:39.804431+00:00",
+      "status": "escalated",
+      "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+    },
+    {
+      "seq": 10,
+      "type": "memory_write",
+      "ts": "2026-08-24T22:34:39.805975+00:00",
+      "entry": {
+        "run_id": "0d50e21a965d",
+        "ticket_id": "dc-large",
+        "intent": "double_charge",
+        "status": "escalated",
+        "ts": "2026-08-24T22:34:39.805210+00:00",
+        "actions": [],
+        "summary": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+      }
+    }
+  ],
+  "usage": [
+    {
+      "role": "classifier",
+      "model": "claude-haiku-4-5-20251001",
+      "tokens_in": 11,
+      "tokens_out": 4,
+      "cost_usd": 3.1e-05,
+      "latency_ms": 42.55
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 31,
+      "tokens_out": 66,
+      "cost_usd": 0.001083,
+      "latency_ms": 79.9
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 257,
+      "tokens_out": 44,
+      "cost_usd": 0.001431,
+      "latency_ms": 66.85
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 400,
+      "tokens_out": 46,
+      "cost_usd": 0.00189,
+      "latency_ms": 67.9
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 400,
+      "tokens_out": 35,
+      "cost_usd": 0.001725,
+      "latency_ms": 61.45
+    }
+  ],
+  "resolution": {
+    "status": "escalated",
+    "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience.",
+    "actions_taken": [],
+    "escalation_reason": "refund 180.0 exceeds the $100 auto-approval threshold",
+    "confidence": 0.9
+  },
+  "summary": {
+    "intent": "double_charge",
+    "status": "escalated",
+    "stop_reason": "escalate",
+    "tool_calls": 2,
+    "iterations": 2,
+    "llm_calls": 5,
+    "total_tokens": 1294,
+    "total_cost_usd": 0.00616,
+    "total_latency_ms": 318.6,
+    "escalated": true
+  }
+}

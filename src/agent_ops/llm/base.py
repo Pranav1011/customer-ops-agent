@@ -116,5 +116,10 @@ class LLMProvider(ABC):
     def compose_reply(self, view: dict[str, Any]) -> str: ...
 
     @abstractmethod
-    def judge(self, rubric: str, content: str, options: list[str]) -> JudgeResult:
-        """LLM-as-judge for the eval harness (Phase 4)."""
+    def score_reply(self, rubric: str, reply: str) -> JudgeResult:
+        """LLM-as-judge: score a single customer reply against a rubric."""
+
+    @abstractmethod
+    def compare(self, rubric: str, reply_a: str, reply_b: str) -> tuple[str, JudgeResult]:
+        """Pairwise judge: return ('A'|'B', result) for which reply is better.
+        Used by the judge-validation study to measure position bias."""

@@ -70,6 +70,21 @@ refundable remaining. Confidence < 0.6 on a write escalates.
 to unit-test exhaustively (tests/test_policy.py), and keeps the safety logic auditable in
 one place. Escalation is modeled as a *successful* outcome, not a failure.
 
+### D9 — Eval scenarios are self-contained; the judge is validated; injection is sanitized
+**Chose:** (a) Each golden scenario declares its own backend fixtures, so the harness
+resets to a known state per scenario and expected final state is exactly checkable —
+rather than depending on random-seed picks. (b) The LLM-as-judge is measured, not trusted:
+a pairwise position-consistency study, repetition-stability, and human-agreement on a
+hand-labeled subset (per Shi et al. 2406.07791). (c) A prompt-injection scanner sanitizes
+untrusted ticket text before classification (strips embedded "SYSTEM:"/"ignore previous"
+instructions), so injected commands can't steer the agent.
+**Rejected:** Depending on the shared seed for expected outcomes; a bare judge with no
+reliability check; relying on the model alone to resist injection.
+**Why:** Determinism makes the harness reproducible and CI-gateable; a validated judge is
+far more credible; and input sanitization is a concrete, testable OWASP-LLM defense. The
+first full run caught a real classifier mis-route (logged in ERROR_ANALYSIS.md) — evidence
+the harness earns its keep.
+
 ### D7 — Domain skin: "Aurora", a DTC e-commerce + subscription brand
 **Chose:** A thin e-commerce/subscription skin over a domain-agnostic core (~90% of the
 code is domain-neutral; e-commerce assumptions live only in the tool/data/seed layer).

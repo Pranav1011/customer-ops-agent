@@ -1,0 +1,244 @@
+{
+  "run_id": "0e39b2ebb7ed",
+  "ticket_id": "cx-active",
+  "customer_id": "CUST-F01",
+  "intent": "cancel_subscription",
+  "request_text": "Please cancel my subscription, it's too expensive right now.",
+  "status": "escalated",
+  "created_at": "2026-08-24T22:34:40.085484+00:00",
+  "plan": {
+    "intent": "cancel_subscription",
+    "summary": "Resolve a cancel_subscription request following Aurora policy.",
+    "steps": [
+      {
+        "description": "Look up the subscription",
+        "tool": "get_subscription",
+        "expected_outcome": ""
+      },
+      {
+        "description": "Escalate cancellation for human confirmation",
+        "tool": "escalate_to_human",
+        "expected_outcome": ""
+      }
+    ],
+    "risk_level": "high",
+    "requires_identity": false
+  },
+  "events": [
+    {
+      "seq": 0,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:34:40.081179+00:00",
+      "tool": "get_customer",
+      "args": {
+        "customer_id": "CUST-F01"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "customer_id": "CUST-F01",
+          "name": "Eval Customer",
+          "email": "cust-f01@example.com",
+          "tier": "standard",
+          "tenure_days": 200,
+          "prefers_channel": "email",
+          "identity_verified": true
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 1,
+      "type": "memory_recall",
+      "ts": "2026-08-24T22:34:40.081366+00:00",
+      "memory": {
+        "semantic": {},
+        "recent_resolutions": [],
+        "interaction_count": 0,
+        "returning_customer": false
+      }
+    },
+    {
+      "seq": 2,
+      "type": "intent",
+      "ts": "2026-08-24T22:34:40.081369+00:00",
+      "intent": "cancel_subscription",
+      "confidence": 0.9,
+      "order_id": null,
+      "rationale": "keyword match"
+    },
+    {
+      "seq": 3,
+      "type": "plan",
+      "ts": "2026-08-24T22:34:40.081678+00:00",
+      "plan": {
+        "intent": "cancel_subscription",
+        "summary": "Resolve a cancel_subscription request following Aurora policy.",
+        "steps": [
+          {
+            "description": "Look up the subscription",
+            "tool": "get_subscription",
+            "expected_outcome": ""
+          },
+          {
+            "description": "Escalate cancellation for human confirmation",
+            "tool": "escalate_to_human",
+            "expected_outcome": ""
+          }
+        ],
+        "risk_level": "high",
+        "requires_identity": false
+      }
+    },
+    {
+      "seq": 4,
+      "type": "decision",
+      "ts": "2026-08-24T22:34:40.081978+00:00",
+      "action": "call_tool",
+      "tool": "get_subscription",
+      "args": {
+        "customer_id": "CUST-F01"
+      },
+      "rationale": "Look up the subscription before cancelling.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 5,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:34:40.082603+00:00",
+      "tool": "get_subscription",
+      "args": {
+        "customer_id": "CUST-F01"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "subscriptions": [
+            {
+              "subscription_id": "SUB-F01",
+              "customer_id": "CUST-F01",
+              "plan": "monthly-box",
+              "status": "active",
+              "monthly_amount": 29.0,
+              "started_at": "2026-04-26T22:34:40.079112",
+              "next_renewal": "2026-09-03T22:34:40.079115",
+              "cancelled_effective": null
+            }
+          ],
+          "count": 1
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 6,
+      "type": "decision",
+      "ts": "2026-08-24T22:34:40.082953+00:00",
+      "action": "call_tool",
+      "tool": "cancel_subscription",
+      "args": {
+        "customer_id": "CUST-F01"
+      },
+      "rationale": "Cancellation requested \u2014 policy will require human confirmation.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 7,
+      "type": "guard",
+      "ts": "2026-08-24T22:34:40.082959+00:00",
+      "tool": "cancel_subscription",
+      "effect": "escalate",
+      "rule": "cancellation_requires_human",
+      "reason": "subscription cancellations are irreversible and always require human confirmation"
+    },
+    {
+      "seq": 8,
+      "type": "escalation",
+      "ts": "2026-08-24T22:34:40.082961+00:00",
+      "reason": "subscription cancellations are irreversible and always require human confirmation",
+      "rule": "cancellation_requires_human"
+    },
+    {
+      "seq": 9,
+      "type": "reply",
+      "ts": "2026-08-24T22:34:40.083294+00:00",
+      "status": "escalated",
+      "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+    },
+    {
+      "seq": 10,
+      "type": "memory_write",
+      "ts": "2026-08-24T22:34:40.084842+00:00",
+      "entry": {
+        "run_id": "0e39b2ebb7ed",
+        "ticket_id": "cx-active",
+        "intent": "cancel_subscription",
+        "status": "escalated",
+        "ts": "2026-08-24T22:34:40.084055+00:00",
+        "actions": [],
+        "summary": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+      }
+    }
+  ],
+  "usage": [
+    {
+      "role": "classifier",
+      "model": "claude-haiku-4-5-20251001",
+      "tokens_in": 15,
+      "tokens_out": 5,
+      "cost_usd": 4e-05,
+      "latency_ms": 43.45
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 33,
+      "tokens_out": 68,
+      "cost_usd": 0.001119,
+      "latency_ms": 81.25
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 265,
+      "tokens_out": 39,
+      "cost_usd": 0.00138,
+      "latency_ms": 63.55
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 363,
+      "tokens_out": 45,
+      "cost_usd": 0.001764,
+      "latency_ms": 67.15
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 363,
+      "tokens_out": 35,
+      "cost_usd": 0.001614,
+      "latency_ms": 61.45
+    }
+  ],
+  "resolution": {
+    "status": "escalated",
+    "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience.",
+    "actions_taken": [],
+    "escalation_reason": "subscription cancellations are irreversible and always require human confirmation",
+    "confidence": 0.9
+  },
+  "summary": {
+    "intent": "cancel_subscription",
+    "status": "escalated",
+    "stop_reason": "escalate",
+    "tool_calls": 2,
+    "iterations": 2,
+    "llm_calls": 5,
+    "total_tokens": 1231,
+    "total_cost_usd": 0.005917,
+    "total_latency_ms": 316.9,
+    "escalated": true
+  }
+}

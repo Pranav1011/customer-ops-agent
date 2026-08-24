@@ -92,15 +92,27 @@ class AnthropicProvider(LLMProvider):
         user = load_prompt("reply") + f"\n\nRun state:\n{json.dumps(view, default=str)[:4000]}"
         return self._call("reasoner", self._system, user, max_tokens=512).strip()
 
-    def judge(self, rubric: str, content: str, options: list[str]) -> JudgeResult:
+    def score_reply(self, rubric: str, reply: str) -> JudgeResult:
         user = (
-            f"{rubric}\n\nOptions (choose one): {options}\n\nContent to evaluate:\n{content}\n\n"
-            'Return JSON: {"score": 0.0-1.0, "verdict": "<one option>", "rationale": "..."}'
+            f"{rubric}\n\nCustomer reply to evaluate:\n{reply}\n\n"
+            'Return JSON: {"score": 0.0-1.0, "verdict": "pass|fail", "rationale": "..."}'
         )
         data = _extract_json(self._call("judge", self._system, user, max_tokens=512))
         return JudgeResult(
             score=float(data.get("score", 0.0)),
-            verdict=str(data.get("verdict", options[-1] if options else "fail")),
+            verdict=str(data.get("verdict", "fail")),
             rationale=data.get("rationale", ""),
             raw=data,
+        )
+
+    def compare(self, rubric: str, reply_a: str, reply_b: str) -> tuple[str, JudgeResult]:
+        user = (
+            f"{rubric}\n\nTwo candidate customer replies. Which better satisfies the rubric?\n\n"
+            f"Reply A:\n{reply_a}\n\nReply B:\n{reply_b}\n\n"
+            'Return JSON: {"winner": "A|B", "rationale": "..."}'
+        )
+        data = _extract_json(self._call("judge", self._system, user, max_tokens=256))
+        winner = "A" if str(data.get("winner", "A")).upper().startswith("A") else "B"
+        return winner, JudgeResult(
+            score=1.0, verdict=winner, rationale=data.get("rationale", ""), raw=data
         )

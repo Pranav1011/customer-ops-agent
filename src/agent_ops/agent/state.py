@@ -27,6 +27,9 @@ class AgentState(TypedDict, total=False):
     memory: dict[str, Any]
     compactions: int
 
+    # Prompt-injection scan result on the (untrusted) request text.
+    injection_detected: bool
+
     # Tool loop working memory.
     scratchpad: list[dict[str, Any]]  # [{tool, args, result}]
     iterations: int
@@ -64,6 +67,7 @@ def new_state(
         plan={},
         memory={},
         compactions=0,
+        injection_detected=False,
         scratchpad=[],
         iterations=0,
         identity_verified=None,

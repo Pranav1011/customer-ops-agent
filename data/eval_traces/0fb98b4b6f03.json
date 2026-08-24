@@ -1,0 +1,268 @@
+{
+  "run_id": "0fb98b4b6f03",
+  "ticket_id": "rf-over-threshold",
+  "customer_id": "CUST-B03",
+  "intent": "refund",
+  "request_text": "Refund order ORD-0202 completely please.",
+  "status": "escalated",
+  "created_at": "2026-08-24T22:36:44.859098+00:00",
+  "plan": {
+    "intent": "refund",
+    "summary": "Resolve a refund request following Aurora policy.",
+    "steps": [
+      {
+        "description": "Verify the order and amount paid",
+        "tool": "get_order",
+        "expected_outcome": ""
+      },
+      {
+        "description": "Check refund policy and threshold",
+        "tool": "search_knowledge_base",
+        "expected_outcome": ""
+      },
+      {
+        "description": "Issue refund if within policy, else escalate",
+        "tool": "issue_refund",
+        "expected_outcome": ""
+      }
+    ],
+    "risk_level": "medium",
+    "requires_identity": false
+  },
+  "events": [
+    {
+      "seq": 0,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:36:44.853890+00:00",
+      "tool": "get_customer",
+      "args": {
+        "customer_id": "CUST-B03"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "customer_id": "CUST-B03",
+          "name": "Eval Customer",
+          "email": "cust-b03@example.com",
+          "tier": "standard",
+          "tenure_days": 200,
+          "prefers_channel": "email",
+          "identity_verified": true
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 1,
+      "type": "memory_recall",
+      "ts": "2026-08-24T22:36:44.854060+00:00",
+      "memory": {
+        "semantic": {},
+        "recent_resolutions": [],
+        "interaction_count": 0,
+        "returning_customer": false
+      }
+    },
+    {
+      "seq": 2,
+      "type": "intent",
+      "ts": "2026-08-24T22:36:44.854063+00:00",
+      "intent": "refund",
+      "confidence": 0.9,
+      "order_id": "ORD-0202",
+      "rationale": "keyword match"
+    },
+    {
+      "seq": 3,
+      "type": "plan",
+      "ts": "2026-08-24T22:36:44.854384+00:00",
+      "plan": {
+        "intent": "refund",
+        "summary": "Resolve a refund request following Aurora policy.",
+        "steps": [
+          {
+            "description": "Verify the order and amount paid",
+            "tool": "get_order",
+            "expected_outcome": ""
+          },
+          {
+            "description": "Check refund policy and threshold",
+            "tool": "search_knowledge_base",
+            "expected_outcome": ""
+          },
+          {
+            "description": "Issue refund if within policy, else escalate",
+            "tool": "issue_refund",
+            "expected_outcome": ""
+          }
+        ],
+        "risk_level": "medium",
+        "requires_identity": false
+      }
+    },
+    {
+      "seq": 4,
+      "type": "decision",
+      "ts": "2026-08-24T22:36:44.854714+00:00",
+      "action": "call_tool",
+      "tool": "get_order",
+      "args": {
+        "order_id": "ORD-0202"
+      },
+      "rationale": "Verify the order and amount paid before refunding.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 5,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:36:44.855035+00:00",
+      "tool": "get_order",
+      "args": {
+        "order_id": "ORD-0202"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "order_id": "ORD-0202",
+          "customer_id": "CUST-B03",
+          "status": "delivered",
+          "total": 175.0,
+          "currency": "USD",
+          "items": [
+            {
+              "sku": "AURORA-ITEM",
+              "name": "Aurora Item",
+              "qty": 1,
+              "price": 175.0
+            }
+          ],
+          "shipping_address": {
+            "line1": "1 Old St",
+            "city": "Portland",
+            "region": "OR",
+            "postal_code": "97201",
+            "country": "US"
+          },
+          "carrier": "UPS",
+          "tracking_number": "1Z9999999999",
+          "placed_at": "2026-08-19T22:36:44.851240",
+          "delivered_at": "2026-08-23T22:36:44.851243",
+          "refunded_amount": 0.0
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 6,
+      "type": "decision",
+      "ts": "2026-08-24T22:36:44.855318+00:00",
+      "action": "call_tool",
+      "tool": "issue_refund",
+      "args": {
+        "order_id": "ORD-0202",
+        "amount": 175.0,
+        "reason": "customer refund request"
+      },
+      "rationale": "Issue a refund for the refundable remaining amount.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 7,
+      "type": "guard",
+      "ts": "2026-08-24T22:36:44.855732+00:00",
+      "tool": "issue_refund",
+      "effect": "escalate",
+      "rule": "refund_over_threshold",
+      "reason": "refund 175.0 exceeds the $100 auto-approval threshold"
+    },
+    {
+      "seq": 8,
+      "type": "escalation",
+      "ts": "2026-08-24T22:36:44.855735+00:00",
+      "reason": "refund 175.0 exceeds the $100 auto-approval threshold",
+      "rule": "refund_over_threshold"
+    },
+    {
+      "seq": 9,
+      "type": "reply",
+      "ts": "2026-08-24T22:36:44.856102+00:00",
+      "status": "escalated",
+      "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+    },
+    {
+      "seq": 10,
+      "type": "memory_write",
+      "ts": "2026-08-24T22:36:44.857907+00:00",
+      "entry": {
+        "run_id": "0fb98b4b6f03",
+        "ticket_id": "rf-over-threshold",
+        "intent": "refund",
+        "status": "escalated",
+        "ts": "2026-08-24T22:36:44.857142+00:00",
+        "actions": [],
+        "summary": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+      }
+    }
+  ],
+  "usage": [
+    {
+      "role": "classifier",
+      "model": "claude-haiku-4-5-20251001",
+      "tokens_in": 10,
+      "tokens_out": 2,
+      "cost_usd": 2e-05,
+      "latency_ms": 41.5
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 29,
+      "tokens_out": 92,
+      "cost_usd": 0.001467,
+      "latency_ms": 95.19999999999999
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 276,
+      "tokens_out": 38,
+      "cost_usd": 0.001398,
+      "latency_ms": 63.099999999999994
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 422,
+      "tokens_out": 52,
+      "cost_usd": 0.002046,
+      "latency_ms": 71.2
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 422,
+      "tokens_out": 35,
+      "cost_usd": 0.001791,
+      "latency_ms": 61.45
+    }
+  ],
+  "resolution": {
+    "status": "escalated",
+    "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience.",
+    "actions_taken": [],
+    "escalation_reason": "refund 175.0 exceeds the $100 auto-approval threshold",
+    "confidence": 0.9
+  },
+  "summary": {
+    "intent": "refund",
+    "status": "escalated",
+    "stop_reason": "escalate",
+    "tool_calls": 2,
+    "iterations": 2,
+    "llm_calls": 5,
+    "total_tokens": 1378,
+    "total_cost_usd": 0.006722,
+    "total_latency_ms": 332.4,
+    "escalated": true
+  }
+}

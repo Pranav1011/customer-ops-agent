@@ -25,6 +25,7 @@ from agent_ops.llm.base import LLMProvider
 from agent_ops.memory.long_term import recall, record_resolution
 from agent_ops.memory.short_term import compact_scratchpad
 from agent_ops.policy.engine import evaluate_action
+from agent_ops.policy.injection import scan
 from agent_ops.tools.registry import REGISTRY, ToolContext
 
 _ORDER_RE = re.compile(r"ORD-\d{4,6}", re.IGNORECASE)
@@ -77,7 +78,19 @@ def _do_escalate(state: AgentState, reason: str, rule: str | None = None) -> Non
 # --------------------------------------------------------------------------- #
 def intake(state: AgentState, config: RunnableConfig) -> AgentState:
     provider = _provider(config)
-    text = state["request_text"]
+    raw = state["request_text"]
+
+    # Prompt-injection defense: sanitize untrusted text before classification.
+    text, injected, markers = scan(raw)
+    state["injection_detected"] = injected
+    if injected:
+        _event(
+            state,
+            "guard",
+            decision="sanitize_input",
+            reason="prompt_injection_markers",
+            markers=markers,
+        )
 
     result: IntentResult = provider.classify(text)
     _drain(provider, state)

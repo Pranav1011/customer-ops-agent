@@ -25,6 +25,7 @@ def summarize(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "intent": state.get("intent"),
         "status": (state.get("resolution") or {}).get("status"),
+        "stop_reason": state.get("stop_reason"),
         "tool_calls": len(tool_calls),
         "iterations": state.get("iterations", 0),
         "llm_calls": len(usage),

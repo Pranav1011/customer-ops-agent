@@ -1,0 +1,238 @@
+{
+  "run_id": "39f5f7f85224",
+  "ticket_id": "os-cancelled",
+  "customer_id": "CUST-A05",
+  "intent": "order_status",
+  "request_text": "What's going on with order ORD-0104? Track it for me.",
+  "status": "resolved",
+  "created_at": "2026-08-24T22:39:07.860075+00:00",
+  "plan": {
+    "intent": "order_status",
+    "summary": "Resolve a order_status request following Aurora policy.",
+    "steps": [
+      {
+        "description": "Locate the order",
+        "tool": "get_order",
+        "expected_outcome": "order record"
+      },
+      {
+        "description": "Summarize status and tracking for the customer",
+        "tool": null,
+        "expected_outcome": "grounded reply"
+      }
+    ],
+    "risk_level": "low",
+    "requires_identity": false
+  },
+  "events": [
+    {
+      "seq": 0,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:39:07.855497+00:00",
+      "tool": "get_customer",
+      "args": {
+        "customer_id": "CUST-A05"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "customer_id": "CUST-A05",
+          "name": "Eval Customer",
+          "email": "cust-a05@example.com",
+          "tier": "standard",
+          "tenure_days": 200,
+          "prefers_channel": "email",
+          "identity_verified": true
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 1,
+      "type": "memory_recall",
+      "ts": "2026-08-24T22:39:07.855667+00:00",
+      "memory": {
+        "semantic": {},
+        "recent_resolutions": [],
+        "interaction_count": 0,
+        "returning_customer": false
+      }
+    },
+    {
+      "seq": 2,
+      "type": "intent",
+      "ts": "2026-08-24T22:39:07.855669+00:00",
+      "intent": "order_status",
+      "confidence": 0.9,
+      "order_id": "ORD-0104",
+      "rationale": "keyword match"
+    },
+    {
+      "seq": 3,
+      "type": "plan",
+      "ts": "2026-08-24T22:39:07.855978+00:00",
+      "plan": {
+        "intent": "order_status",
+        "summary": "Resolve a order_status request following Aurora policy.",
+        "steps": [
+          {
+            "description": "Locate the order",
+            "tool": "get_order",
+            "expected_outcome": "order record"
+          },
+          {
+            "description": "Summarize status and tracking for the customer",
+            "tool": null,
+            "expected_outcome": "grounded reply"
+          }
+        ],
+        "risk_level": "low",
+        "requires_identity": false
+      }
+    },
+    {
+      "seq": 4,
+      "type": "decision",
+      "ts": "2026-08-24T22:39:07.856257+00:00",
+      "action": "call_tool",
+      "tool": "get_order",
+      "args": {
+        "order_id": "ORD-0104"
+      },
+      "rationale": "Fetch the referenced order to ground the status.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 5,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:39:07.856905+00:00",
+      "tool": "get_order",
+      "args": {
+        "order_id": "ORD-0104"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "order_id": "ORD-0104",
+          "customer_id": "CUST-A05",
+          "status": "cancelled",
+          "total": 33.0,
+          "currency": "USD",
+          "items": [
+            {
+              "sku": "AURORA-ITEM",
+              "name": "Aurora Item",
+              "qty": 1,
+              "price": 33.0
+            }
+          ],
+          "shipping_address": {
+            "line1": "1 Old St",
+            "city": "Portland",
+            "region": "OR",
+            "postal_code": "97201",
+            "country": "US"
+          },
+          "carrier": null,
+          "tracking_number": null,
+          "placed_at": "2026-08-19T22:39:07.853548",
+          "delivered_at": null,
+          "refunded_amount": 0.0
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 6,
+      "type": "decision",
+      "ts": "2026-08-24T22:39:07.857242+00:00",
+      "action": "finish",
+      "tool": null,
+      "args": {},
+      "rationale": "Order located; summarize status.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 7,
+      "type": "reply",
+      "ts": "2026-08-24T22:39:07.857602+00:00",
+      "status": "resolved",
+      "customer_reply": "Order ORD-0104 shows as cancelled. If that's unexpected, let me know and I'll look into it right away."
+    },
+    {
+      "seq": 8,
+      "type": "memory_write",
+      "ts": "2026-08-24T22:39:07.858625+00:00",
+      "entry": {
+        "run_id": "39f5f7f85224",
+        "ticket_id": "os-cancelled",
+        "intent": "order_status",
+        "status": "resolved",
+        "ts": "2026-08-24T22:39:07.857804+00:00",
+        "actions": [],
+        "summary": "Order ORD-0104 shows as cancelled. If that's unexpected, let me know and I'll look into it right away."
+      }
+    }
+  ],
+  "usage": [
+    {
+      "role": "classifier",
+      "model": "claude-haiku-4-5-20251001",
+      "tokens_in": 13,
+      "tokens_out": 4,
+      "cost_usd": 3.3e-05,
+      "latency_ms": 42.4
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 32,
+      "tokens_out": 66,
+      "cost_usd": 0.001086,
+      "latency_ms": 79.9
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 257,
+      "tokens_out": 38,
+      "cost_usd": 0.001341,
+      "latency_ms": 62.8
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 394,
+      "tokens_out": 26,
+      "cost_usd": 0.001572,
+      "latency_ms": 55.75
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 394,
+      "tokens_out": 25,
+      "cost_usd": 0.001557,
+      "latency_ms": 55.3
+    }
+  ],
+  "resolution": {
+    "status": "resolved",
+    "customer_reply": "Order ORD-0104 shows as cancelled. If that's unexpected, let me know and I'll look into it right away.",
+    "actions_taken": [],
+    "escalation_reason": null,
+    "confidence": 0.9
+  },
+  "summary": {
+    "intent": "order_status",
+    "status": "resolved",
+    "stop_reason": "finish",
+    "tool_calls": 2,
+    "iterations": 2,
+    "llm_calls": 5,
+    "total_tokens": 1249,
+    "total_cost_usd": 0.005589,
+    "total_latency_ms": 296.1,
+    "escalated": false
+  }
+}

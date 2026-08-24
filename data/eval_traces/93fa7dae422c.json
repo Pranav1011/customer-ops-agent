@@ -1,0 +1,187 @@
+{
+  "run_id": "93fa7dae422c",
+  "ticket_id": "addr-no-order-id",
+  "customer_id": "CUST-E05",
+  "intent": "address_change",
+  "request_text": "I moved and need to change my shipping address.",
+  "status": "escalated",
+  "created_at": "2026-08-24T22:39:08.581367+00:00",
+  "plan": {
+    "intent": "address_change",
+    "summary": "Resolve a address_change request following Aurora policy.",
+    "steps": [
+      {
+        "description": "Verify identity",
+        "tool": "get_customer",
+        "expected_outcome": ""
+      },
+      {
+        "description": "Update shipping address if order not yet shipped",
+        "tool": "update_shipping_address",
+        "expected_outcome": ""
+      }
+    ],
+    "risk_level": "high",
+    "requires_identity": true
+  },
+  "events": [
+    {
+      "seq": 0,
+      "type": "tool_call",
+      "ts": "2026-08-24T22:39:08.578054+00:00",
+      "tool": "get_customer",
+      "args": {
+        "customer_id": "CUST-E05"
+      },
+      "result": {
+        "ok": true,
+        "data": {
+          "customer_id": "CUST-E05",
+          "name": "Eval Customer",
+          "email": "cust-e05@example.com",
+          "tier": "standard",
+          "tenure_days": 200,
+          "prefers_channel": "email",
+          "identity_verified": true
+        },
+        "error": null
+      }
+    },
+    {
+      "seq": 1,
+      "type": "memory_recall",
+      "ts": "2026-08-24T22:39:08.578219+00:00",
+      "memory": {
+        "semantic": {},
+        "recent_resolutions": [],
+        "interaction_count": 0,
+        "returning_customer": false
+      }
+    },
+    {
+      "seq": 2,
+      "type": "intent",
+      "ts": "2026-08-24T22:39:08.578221+00:00",
+      "intent": "address_change",
+      "confidence": 0.9,
+      "order_id": null,
+      "rationale": "keyword match"
+    },
+    {
+      "seq": 3,
+      "type": "plan",
+      "ts": "2026-08-24T22:39:08.578496+00:00",
+      "plan": {
+        "intent": "address_change",
+        "summary": "Resolve a address_change request following Aurora policy.",
+        "steps": [
+          {
+            "description": "Verify identity",
+            "tool": "get_customer",
+            "expected_outcome": ""
+          },
+          {
+            "description": "Update shipping address if order not yet shipped",
+            "tool": "update_shipping_address",
+            "expected_outcome": ""
+          }
+        ],
+        "risk_level": "high",
+        "requires_identity": true
+      }
+    },
+    {
+      "seq": 4,
+      "type": "decision",
+      "ts": "2026-08-24T22:39:08.578790+00:00",
+      "action": "escalate",
+      "tool": null,
+      "args": {
+        "reason": "No order id provided for the address change."
+      },
+      "rationale": "Need an order id.",
+      "confidence": 1.0
+    },
+    {
+      "seq": 5,
+      "type": "escalation",
+      "ts": "2026-08-24T22:39:08.578792+00:00",
+      "reason": "No order id provided for the address change.",
+      "rule": null
+    },
+    {
+      "seq": 6,
+      "type": "reply",
+      "ts": "2026-08-24T22:39:08.579233+00:00",
+      "status": "escalated",
+      "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+    },
+    {
+      "seq": 7,
+      "type": "memory_write",
+      "ts": "2026-08-24T22:39:08.580777+00:00",
+      "entry": {
+        "run_id": "93fa7dae422c",
+        "ticket_id": "addr-no-order-id",
+        "intent": "address_change",
+        "status": "escalated",
+        "ts": "2026-08-24T22:39:08.579966+00:00",
+        "actions": [],
+        "summary": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience."
+      }
+    }
+  ],
+  "usage": [
+    {
+      "role": "classifier",
+      "model": "claude-haiku-4-5-20251001",
+      "tokens_in": 11,
+      "tokens_out": 4,
+      "cost_usd": 3.1e-05,
+      "latency_ms": 42.7
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 29,
+      "tokens_out": 66,
+      "cost_usd": 0.001077,
+      "latency_ms": 80.05
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 256,
+      "tokens_out": 36,
+      "cost_usd": 0.001308,
+      "latency_ms": 62.05
+    },
+    {
+      "role": "reasoner",
+      "model": "claude-sonnet-5",
+      "tokens_in": 256,
+      "tokens_out": 35,
+      "cost_usd": 0.001293,
+      "latency_ms": 61.45
+    }
+  ],
+  "resolution": {
+    "status": "escalated",
+    "customer_reply": "Thanks for reaching out. I've routed your request to a specialist on our team who will follow up with you shortly. We appreciate your patience.",
+    "actions_taken": [],
+    "escalation_reason": "No order id provided for the address change.",
+    "confidence": 0.9
+  },
+  "summary": {
+    "intent": "address_change",
+    "status": "escalated",
+    "stop_reason": "escalate",
+    "tool_calls": 1,
+    "iterations": 1,
+    "llm_calls": 4,
+    "total_tokens": 693,
+    "total_cost_usd": 0.003709,
+    "total_latency_ms": 246.2,
+    "escalated": true
+  }
+}
