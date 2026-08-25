@@ -119,6 +119,25 @@ sensible defaults, so `.env` is optional. Recognized variables:
 | `MAX_ITERATIONS` | `8` | agent tool-loop cap |
 | `COST_CEILING_USD` | `0.50` | per-task budget ceiling |
 | `REFUND_APPROVAL_THRESHOLD` | `100.0` | refunds above this require human approval |
+| `WORKER_CONCURRENCY` | `2` | max tickets resolved in parallel by the async worker pool |
+
+## Architecture & system design
+
+Tickets are resolved **asynchronously** off the request path: `POST /jobs` returns a
+`job_id` immediately and a bounded worker pool (`WORKER_CONCURRENCY`) processes it — the
+right pattern for slow, variable agent runs (a local LLM is ~30–60s/ticket). Clients poll
+`GET /jobs/{id}`; `GET /metrics` exposes throughput, escalation rate, cost/latency, and
+queue depth. Reliability is layered (input sanitization → policy-gated writes → loop/cost
+caps → reply grounding → human escalation), so a weak model degrades to safe escalation
+rather than unsafe action.
+
+```bash
+docker compose up --build     # containerized API at http://localhost:8000
+```
+
+Full write-up (request path, reliability boundaries, data/state, and the
+production-evolution path — Redis/SQS, Postgres, OpenTelemetry, Prometheus) is in
+[`docs/architecture.md`](docs/architecture.md).
 
 ## MCP server
 

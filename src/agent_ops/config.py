@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     credit_direct_limit: float = Field(default=25.0)  # goodwill credit auto-apply ceiling
     confidence_threshold: float = Field(default=0.6)  # below this, a write escalates
 
+    # --- Async worker pool ---
+    worker_concurrency: int = Field(default=2)  # max tickets resolved in parallel
+
     def _resolve(self, p: str) -> Path:
         path = Path(p)
         return path if path.is_absolute() else REPO_ROOT / path

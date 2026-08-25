@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from agent_ops.agent.graph import run_ticket
+from agent_ops.api import worker
 from agent_ops.backend.db import session_scope
-from agent_ops.backend.models import Escalation, Ticket, TraceRecord
+from agent_ops.backend.models import ActionLog, Escalation, Job, Ticket, TraceRecord
 
 router = APIRouter()
 
@@ -24,6 +25,12 @@ class SubmitTicket(BaseModel):
     order_id: str | None = None
     channel: str = "email"
     subject: str = ""
+
+
+class JobRef(BaseModel):
+    job_id: str
+    ticket_id: str
+    status: str
 
 
 class TicketResult(BaseModel):
@@ -68,6 +75,92 @@ def submit_ticket(payload: SubmitTicket) -> TicketResult:
         escalation_reason=result["escalation_reason"],
         summary=result["summary"],
     )
+
+
+@router.post("/jobs", response_model=JobRef, status_code=202)
+def submit_job(payload: SubmitTicket) -> JobRef:
+    """Async submission: create the ticket, enqueue it on the worker pool, and
+    return a job reference immediately. Poll GET /jobs/{id} for the result."""
+    ticket_id = f"TCK-{uuid.uuid4().hex[:8].upper()}"
+    with session_scope() as s:
+        s.add(
+            Ticket(
+                id=ticket_id,
+                customer_id=payload.customer_id,
+                channel=payload.channel,
+                subject=payload.subject,
+                body=payload.body,
+                status="open",
+            )
+        )
+    job_id = worker.enqueue(
+        body=payload.body,
+        ticket_id=ticket_id,
+        customer_id=payload.customer_id,
+        order_id=payload.order_id,
+    )
+    return JobRef(job_id=job_id, ticket_id=ticket_id, status="queued")
+
+
+@router.post("/tickets/{ticket_id}/rerun", response_model=JobRef, status_code=202)
+def rerun_ticket(ticket_id: str) -> JobRef:
+    """Async re-run of an existing ticket on the worker pool."""
+    with session_scope() as s:
+        t = s.get(Ticket, ticket_id)
+        if t is None:
+            raise HTTPException(404, f"ticket not found: {ticket_id}")
+        body, customer_id = t.body, t.customer_id
+    job_id = worker.enqueue(body=body, ticket_id=ticket_id, customer_id=customer_id)
+    return JobRef(job_id=job_id, ticket_id=ticket_id, status="queued")
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: str) -> dict[str, Any]:
+    job = worker.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"job not found: {job_id}")
+    return job
+
+
+@router.get("/metrics")
+def metrics() -> dict[str, Any]:
+    """Aggregate operational metrics for the ops console / monitoring."""
+    with session_scope() as s:
+        traces = [(t.status, dict(t.summary or {})) for t in s.exec(select(TraceRecord)).all()]
+        job_rows = [j.status for j in s.exec(select(Job)).all()]
+        action_rows = [(a.tool, a.ok) for a in s.exec(select(ActionLog)).all()]
+
+    runs = {"total": len(traces), "resolved": 0, "escalated": 0, "failed": 0}
+    cost = latency = tokens = 0.0
+    for status, summ in traces:
+        if status in runs:
+            runs[status] += 1
+        cost += float(summ.get("total_cost_usd", 0) or 0)
+        latency += float(summ.get("total_latency_ms", 0) or 0)
+        tokens += float(summ.get("total_tokens", 0) or 0)
+    n = max(1, len(traces))
+
+    job_states: dict[str, int] = {}
+    for st in job_rows:
+        job_states[st] = job_states.get(st, 0) + 1
+
+    by_tool: dict[str, int] = {}
+    ok_actions = 0
+    for tool, ok in action_rows:
+        by_tool[tool] = by_tool.get(tool, 0) + 1
+        if ok:
+            ok_actions += 1
+
+    escalated = runs.get("escalated", 0)
+    return {
+        "runs": runs,
+        "escalation_rate": round(escalated / n, 4),
+        "avg_cost_usd": round(cost / n, 6),
+        "avg_latency_ms": round(latency / n, 1),
+        "avg_tokens": round(tokens / n, 1),
+        "jobs": job_states,
+        "actions": {"total": len(action_rows), "succeeded": ok_actions, "by_tool": by_tool},
+    }
 
 
 @router.post("/tickets/{ticket_id}/resolve", response_model=TicketResult)

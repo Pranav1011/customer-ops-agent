@@ -65,3 +65,72 @@ everything.
 The agent core is domain-agnostic. Re-pointing Aurora at IT triage, insurance claims, or
 HR onboarding means swapping `tools/`, `backend/models.py` + `seed.py`, and the KB — the
 loop, policy engine, memory, tracing, and eval harness are unchanged.
+
+---
+
+## System design
+
+### Request path (async job queue)
+
+Agent runs are slow and variable (a local LLM is ~30–60s per ticket), so resolution runs
+off the request path on a bounded worker pool:
+
+```
+POST /jobs ──▶ create Job(queued) ──▶ ThreadPoolExecutor (size = WORKER_CONCURRENCY)
+   │                                        │
+   └── 202 {job_id} (immediate)             ├─ Job(running) → agent loop → Job(succeeded, run_id)
+                                            └─ on error   → Job(failed, error)
+GET /jobs/{id}  ◀── client polls for terminal status, then GET /trace/{run_id}
+```
+
+The pool size **bounds concurrency** (backpressure): excess submissions queue rather than
+overwhelming the model. The API stays responsive; the UI submits, shows a "reasoning…"
+state, and polls. `GET /metrics` exposes throughput, escalation rate, cost/latency, queue
+depth, and action counts for monitoring.
+
+### Swappable brain behind one interface
+
+`LLMProvider` (`classify / plan / decide / compose_reply / score_reply / compare`) has
+three implementations — `mock` (rules), `ollama` (local LLM), `anthropic` (Claude) —
+selected by one env var. Nothing else in the system changes. This is what makes the
+model-comparison harness and the "safety decoupled from model quality" result possible.
+
+### Reliability boundaries (defense in depth)
+
+1. **Input** — untrusted ticket text is sanitized for prompt-injection before classification.
+2. **Every write** — gated by the deterministic policy engine (thresholds, identity,
+   scope, cancellation) *before* execution, at a single choke point (and re-checked inside
+   each tool).
+3. **The loop** — max-iteration cap, per-task cost ceiling, and a repeated-call loop-breaker.
+4. **Output** — reply grounding check (no un-sourced order ids reach the customer).
+5. **Fallback** — anything uncertain escalates to a human; escalation is a success outcome.
+
+Because these are deterministic and independent of the model, a weak model degrades to safe
+escalation rather than unsafe action (measured: llama3.1:8b = 25% task success, **100%
+action safety**).
+
+### Data & state
+
+SQLite (WAL + busy-timeout for concurrent workers) via SQLModel; Chroma for the KB with
+local embeddings; per-run JSON traces on disk referenced from a `TraceRecord`. The data
+layer is isolated behind `backend/db.py`, so Postgres is a driver swap, not a rewrite.
+
+### Deploy
+
+`docker compose up --build` → containerized API (uv-installed, seeds on first boot, volume
+for data). Mock brain by default (offline); point at host Ollama or Claude via env.
+
+### Production evolution (what changes at scale)
+
+| Concern | Today (laptop) | Production |
+|---|---|---|
+| Queue | in-process `ThreadPoolExecutor` + DB rows | Redis/SQS + dedicated worker deployment |
+| DB | SQLite (WAL) | Postgres (connection pool, read replicas) |
+| Tracing | JSON files + `TraceRecord` | OpenTelemetry → a trace backend (Langfuse/LangSmith) |
+| Vector store | Chroma (local) | managed pgvector / Qdrant |
+| Metrics | `/metrics` JSON | Prometheus scrape + Grafana; alerts on action-safety drop |
+| Scaling | one process | stateless API + horizontal workers behind a queue |
+| Evals | `make eval` + CI gate | same harness in CI, blocking deploys on safety floor |
+
+The interfaces (queue, provider, data layer, tracing) are already the shapes these
+production components expect, so each is a swap rather than a redesign.

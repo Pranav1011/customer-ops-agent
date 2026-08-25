@@ -130,6 +130,20 @@ class Escalation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class Job(SQLModel, table=True):
+    """An asynchronous unit of work: resolve a ticket on the worker pool."""
+
+    id: str = Field(primary_key=True)  # e.g. JOB-abc123
+    ticket_id: str | None = Field(default=None, index=True)
+    kind: str = "resolve"
+    status: str = "queued"  # queued | running | succeeded | failed
+    run_id: str | None = None
+    error: str | None = None
+    result: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 ALL_TABLES = [
     Customer,
     Order,
@@ -141,4 +155,5 @@ ALL_TABLES = [
     TraceRecord,
     MemoryProfile,
     Escalation,
+    Job,
 ]

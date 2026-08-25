@@ -1,0 +1,24 @@
+# One-command containerized deploy of the Aurora API.
+#   docker compose up --build   ->   http://localhost:8000  (docs at /docs)
+#
+# Runs on the deterministic mock brain by default (offline, free). To use the
+# real local LLM, run Ollama on the host and set LLM_PROVIDER=ollama +
+# OLLAMA_BASE_URL=http://host.docker.internal:11434 (uncommented below).
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LLM_PROVIDER: mock
+      WORKER_CONCURRENCY: "2"
+      # LLM_PROVIDER: ollama
+      # OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # OLLAMA_MODEL: llama3.1:8b
+    volumes:
+      - aurora-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  aurora-data:

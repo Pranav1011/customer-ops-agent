@@ -85,6 +85,22 @@ far more credible; and input sanitization is a concrete, testable OWASP-LLM defe
 first full run caught a real classifier mis-route (logged in ERROR_ANALYSIS.md) — evidence
 the harness earns its keep.
 
+### D13 — System-design layer: async job queue, observability, containerization
+**Chose:** Move ticket resolution off the request path onto a bounded
+`ThreadPoolExecutor` worker pool (`POST /jobs` → 202 + `job_id`; poll `GET /jobs/{id}`),
+enabled SQLite WAL + busy-timeout for concurrent writes, added a `GET /metrics` aggregate
+endpoint, and a `Dockerfile` + `docker-compose.yml` for one-command deploy. Documented the
+production-evolution path (Redis/SQS queue, Postgres, OTel tracing, Prometheus) in the
+architecture doc.
+**Rejected:** Blocking the HTTP request for the full agent run (bad UX with a ~40s local
+LLM); pulling in Redis/Celery/Postgres now (over-engineering for a laptop — the spec's
+anti-goal).
+**Why:** Long-running agent work needs async processing + backpressure; a bounded in-process
+pool demonstrates the pattern with zero extra infra, and the interfaces (queue, data layer,
+tracing) are deliberately the same shapes their production equivalents expect, so scaling is
+a swap not a rewrite. This adds the system-design/architecture signal without violating
+"runs on a laptop."
+
 ### D12 — MCP server + a real model-comparison table
 **Chose:** Expose the tool registry as an MCP server (official `mcp` 2.x `MCPServer`,
 stdio), generating each tool's input schema from its Pydantic args model and routing write
