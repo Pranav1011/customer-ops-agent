@@ -88,8 +88,19 @@ class ToolRegistry:
         try:
             validated = spec.args_model(**(args or {}))
         except ValidationError as e:
-            return ToolResult(ok=False, error=f"invalid_args: {e.errors()}")
+            return ToolResult(ok=False, error=_format_validation_error(e))
         return spec.func(ctx, validated)
+
+
+def _format_validation_error(e: ValidationError) -> str:
+    """Turn a Pydantic error into a short, LLM-friendly message the model can
+    act on (instead of a raw error object with a docs URL)."""
+    parts = []
+    for err in e.errors():
+        field = ".".join(str(x) for x in err.get("loc", ())) or "args"
+        got = err.get("input")
+        parts.append(f"{field}: {err.get('msg', 'invalid')} (got {got!r})")
+    return "invalid_args: " + "; ".join(parts)
 
 
 REGISTRY = ToolRegistry()
