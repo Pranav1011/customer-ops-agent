@@ -85,6 +85,19 @@ far more credible; and input sanitization is a concrete, testable OWASP-LLM defe
 first full run caught a real classifier mis-route (logged in ERROR_ANALYSIS.md) — evidence
 the harness earns its keep.
 
+### D12 — MCP server + a real model-comparison table
+**Chose:** Expose the tool registry as an MCP server (official `mcp` 2.x `MCPServer`,
+stdio), generating each tool's input schema from its Pydantic args model and routing write
+tools through the same policy engine — so guardrails hold even when tools are driven from
+Claude Desktop/Cursor. Added `make compare` (`eval/compare.py`) that runs one slice under
+`mock` and `ollama` and writes a quality/safety/cost/latency table.
+**Why:** The MCP surface matches where the industry is going and reuses the exact tool +
+policy layer (no duplication). The comparison produced the project's sharpest result:
+llama3.1:8b scored **25% task success but 100% action safety** vs mock's 100/100 — concrete
+evidence that safety is decoupled from model quality. Note: `mcp` on PyPI resolved to a
+newer 2.x with a restructured API (no `@server.list_tools()`); used `MCPServer.add_tool`
+with dynamically-built typed wrappers to get flat, described schemas.
+
 ### D11 — Real LLM reasoning via local Ollama (free), not just Claude
 **Chose:** A third provider, `OllamaProvider` (`LLM_PROVIDER=ollama`), that drives the
 agent's reasoning with a local model (default `llama3.1:8b`) through the same

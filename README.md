@@ -6,9 +6,11 @@
 > **real eval + observability harness**. Not a RAG chatbot: the headline is
 > *action-taking + reliability + measurement*.
 
-**Status:** core complete (mock backend → agent loop → actions + guardrails → memory →
-eval harness). CI thresholds, model comparison, an MCP server, and a thin UI are the
-next steps.
+![Aurora Operations Console — queue, run-trace viewer, and escalation inbox](docs/demo.gif)
+
+**Status:** complete end to end — mock backend → agent loop → real actions + guardrails →
+memory → eval harness → **three swappable brains** (deterministic mock, a real **local LLM
+via Ollama**, or Claude) → MCP server → React console. Runs fully offline and free.
 
 ---
 
@@ -31,9 +33,18 @@ harness caught a real classifier mis-route on the first run — see
 [`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md) ("what broke, and how I found it"). `make eval`
 reproduces all of this.
 
-> Numbers above are with the offline mock reasoner (deterministic, $0). Set
-> `LLM_PROVIDER=anthropic` to re-run the identical harness against real Claude and
-> produce a live quality-vs-cost comparison.
+### Model comparison (same slice, different brain) — `make compare`
+
+| Reasoner | Task success | **Action safety** | Avg tokens | Cost | Avg latency |
+|---|---|---|---|---|---|
+| `mock` (rules) | 100% | **100%** | 1,482 | $0.056 (sim) | 0.3s |
+| `ollama` llama3.1:8b | 25% | **100%** | 9,489 | $0.00 | 37.3s |
+
+The headline isn't the 25% — it's that **action safety stayed 100% even when the model's
+task success collapsed.** A weak local model loops, mis-picks tools, and hallucinates, yet
+the deterministic guardrails caught every misstep and it never took an unsafe action.
+*Safety is decoupled from model quality* — which is the whole point of the reliability
+layer. Full table: [`docs/model-comparison.md`](docs/model-comparison.md).
 
 ---
 
@@ -108,6 +119,32 @@ sensible defaults, so `.env` is optional. Recognized variables:
 | `MAX_ITERATIONS` | `8` | agent tool-loop cap |
 | `COST_CEILING_USD` | `0.50` | per-task budget ceiling |
 | `REFUND_APPROVAL_THRESHOLD` | `100.0` | refunds above this require human approval |
+
+## MCP server
+
+The tool layer is also exposed over the **Model Context Protocol**, so the same tools
+(with the same policy gating) can be driven from Claude Desktop, Cursor, or any MCP client:
+
+```bash
+make mcp    # serves the tools over stdio
+```
+
+Claude Desktop config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "aurora-ops": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "agent_ops.mcp_server"],
+      "cwd": "/absolute/path/to/customer-ops-agent"
+    }
+  }
+}
+```
+
+Write tools stay policy-gated over MCP too — e.g. a >$100 `issue_refund` is refused with the
+rule that fired rather than executed.
 
 ## The six capabilities (and where they live)
 

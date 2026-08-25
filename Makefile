@@ -28,6 +28,12 @@ ui: ## Run the frontend console (http://localhost:5173) — needs `make dev` run
 eval: ## Run the eval harness over the golden dataset and print the report
 	$(UV) run python -m agent_ops.eval.harness
 
+compare: ## Compare brains (mock vs ollama) on a slice -> docs/model-comparison.md
+	$(UV) run python -m agent_ops.eval.compare
+
+mcp: ## Serve the tool layer as an MCP server over stdio (for Claude Desktop/Cursor)
+	$(UV) run python -m agent_ops.mcp_server
+
 test: ## Run the test suite
 	$(UV) run pytest -q
 
