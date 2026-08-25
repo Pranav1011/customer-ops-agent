@@ -23,6 +23,7 @@ def summarize(state: dict[str, Any]) -> dict[str, Any]:
     total_tokens = sum(u.get("tokens_in", 0) + u.get("tokens_out", 0) for u in usage)
     total_latency = round(sum(u.get("latency_ms", 0.0) for u in usage), 1)
     return {
+        "provider": state.get("provider"),
         "intent": state.get("intent"),
         "status": (state.get("resolution") or {}).get("status"),
         "stop_reason": state.get("stop_reason"),

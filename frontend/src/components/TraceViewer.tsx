@@ -3,6 +3,11 @@ import { api } from "../api";
 import type { QueueTicket, Trace, TraceEvent } from "../types";
 import { StatusChip, viewEvent } from "../ui";
 
+function fmtLatency(ms: number): React.ReactNode {
+  if (ms >= 1000) return <>{(ms / 1000).toFixed(1)}<small> s</small></>;
+  return <>{Math.round(ms)}<small> ms</small></>;
+}
+
 function Code({ value }: { value: unknown }) {
   if (value == null) return null;
   return <pre className="code">{JSON.stringify(value, null, 2)}</pre>;
@@ -86,8 +91,18 @@ export function TraceViewer({ ticket, onChanged }: { ticket: QueueTicket; onChan
           <h1>{ticket.subject || (trace?.intent ?? "Ticket")}</h1>
         </div>
         <div className="spacer" />
+        <button className="btn ghost" onClick={runAgent} disabled={running} title="Run the agent again on the current brain">
+          {running ? "Reasoning…" : "Re-run live"}
+        </button>
         <StatusChip status={trace?.status ?? ticket.resolution_status ?? ticket.status} />
       </div>
+
+      {running && (
+        <div className="running-banner">
+          <span className="spin" /> Agent is reasoning over this ticket — with a local LLM this
+          takes ~30–60s (it's actually thinking, not replaying).
+        </div>
+      )}
 
       {err && <div style={{ color: "var(--danger)", fontSize: 13, marginTop: 12 }}>{err}</div>}
 
@@ -142,19 +157,17 @@ export function TraceViewer({ ticket, onChanged }: { ticket: QueueTicket; onChan
           )}
 
           <div className="metrics">
+            <Metric k="Reasoner">
+              <span className="chip plain">{(summary.provider as string) ?? "—"}</span>
+            </Metric>
             <Metric k="Outcome">
               <StatusChip status={trace.status} />
             </Metric>
             <Metric k="Tool calls">{num("tool_calls")}</Metric>
             <Metric k="Iterations">{num("iterations")}</Metric>
             <Metric k="Tokens">{num("total_tokens").toLocaleString()}</Metric>
-            <Metric k="Cost">
-              ${num("total_cost_usd").toFixed(4)}
-            </Metric>
-            <Metric k="Latency">
-              {Math.round(num("total_latency_ms"))}
-              <small> ms</small>
-            </Metric>
+            <Metric k="Cost">${num("total_cost_usd").toFixed(4)}</Metric>
+            <Metric k="Latency">{fmtLatency(num("total_latency_ms"))}</Metric>
           </div>
         </>
       ) : null}

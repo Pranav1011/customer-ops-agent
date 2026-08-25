@@ -71,6 +71,7 @@ def run_ticket(
         customer_id=customer_id,
         order_id=order_id,
     )
+    initial["provider"] = settings.llm_provider
     config = {
         "configurable": {"provider": provider, "thread_id": thread_id or run_id},
         "recursion_limit": settings.max_iterations + 12,

@@ -13,6 +13,7 @@ from typing import Any, TypedDict
 class AgentState(TypedDict, total=False):
     # Identity of the run / work item.
     run_id: str
+    provider: str  # which brain ran this: mock | ollama | anthropic
     ticket_id: str | None
     customer_id: str | None
     order_id: str | None  # extracted hint from the request
@@ -32,6 +33,7 @@ class AgentState(TypedDict, total=False):
 
     # Tool loop working memory.
     scratchpad: list[dict[str, Any]]  # [{tool, args, result}]
+    call_sigs: list[str]  # signatures of executed tool calls, for loop detection
     iterations: int
     identity_verified: bool | None
 
@@ -69,6 +71,7 @@ def new_state(
         compactions=0,
         injection_detected=False,
         scratchpad=[],
+        call_sigs=[],
         iterations=0,
         identity_verified=None,
         done=False,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -218,6 +219,28 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
         _do_escalate(state, decision.args.get("reason") or decision.rationale)
         return state
 
+    # Guardrail: runaway-loop breaker. A real (esp. small) model can get stuck
+    # re-calling the same tool without making progress. If it repeats an
+    # identical call, or calls the same tool a 3rd time, stop and escalate.
+    sig = tool + ":" + json.dumps(decision.args, sort_keys=True, default=str)
+    sigs = state.setdefault("call_sigs", [])
+    same_tool = sum(1 for s in sigs if s.split(":", 1)[0] == tool)
+    if sig in sigs or same_tool >= 2:
+        _event(
+            state,
+            "guard",
+            decision="loop_break",
+            tool=tool,
+            reason="repeated tool call without progress",
+        )
+        _do_escalate(
+            state,
+            f"runaway loop detected — repeated '{tool}' call without progress",
+            rule="loop_breaker",
+        )
+        return state
+    sigs.append(sig)
+
     spec = REGISTRY.get(tool)
     if spec is None:
         # Model hallucinated a tool — record and let the loop continue/finish.
@@ -313,6 +336,38 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
     view["escalated"] = escalated
     reply = provider.compose_reply(view)
     _drain(provider, state)
+
+    # Guardrail: grounding check. The reply must not cite an order id that never
+    # appeared in a tool result (a hallucinated fact). If it does, discard the
+    # reply and escalate rather than send an ungrounded claim to the customer.
+    if not escalated:
+        grounded = {
+            m.upper()
+            for m in re.findall(
+                r"ORD-\d{3,6}", json.dumps(state.get("scratchpad", []), default=str), re.I
+            )
+        }
+        if state.get("order_id"):
+            grounded.add(state["order_id"].upper())
+        cited = {m.upper() for m in re.findall(r"ORD-\d{3,6}", reply, re.I)}
+        ungrounded = sorted(cited - grounded)
+        if ungrounded:
+            _event(
+                state,
+                "guard",
+                decision="grounding_fail",
+                reason=f"reply cited ungrounded order id(s): {ungrounded}",
+            )
+            escalated = True
+            state["escalated"] = True
+            state["escalation_reason"] = (
+                f"reply referenced ungrounded order id(s) {ungrounded}; escalated to avoid a hallucinated claim"
+            )
+            reply = (
+                "Thanks for reaching out — I want to make sure the details I share are exactly right, "
+                "so I've routed this to a specialist who will follow up with you shortly."
+            )
+            _event(state, "escalation", reason=state["escalation_reason"], rule="grounding_guard")
 
     status = "escalated" if escalated else "resolved"
     resolution = Resolution(

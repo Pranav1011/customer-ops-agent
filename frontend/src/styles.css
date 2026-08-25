@@ -273,6 +273,20 @@ pre.code {
   overflow: auto; max-height: 320px;
 }
 
+/* live-run banner */
+.running-banner {
+  display: flex; align-items: center; gap: 10px;
+  margin: 14px 0 0; padding: 11px 14px; border-radius: var(--radius);
+  background: var(--accent-tint); border: 1px solid var(--accent-line);
+  color: var(--accent-bright); font-size: 13px;
+}
+.spin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid var(--accent-line); border-top-color: var(--accent-bright);
+  animation: spin 0.7s linear infinite; flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* reply + metrics */
 .reply {
   margin-top: 12px; padding: 16px 18px; border-radius: var(--radius);

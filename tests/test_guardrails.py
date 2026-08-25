@@ -96,3 +96,81 @@ def test_refund_is_reversible():
     with session_scope() as s:
         assert s.get(Order, o["id"]).refunded_amount == 0.0
         assert s.get(Payment, refund_payment_id) is None
+
+
+# --- loop-breaker + grounding guards (Phase 5.1) ---
+from agent_ops.agent.graph import build_graph  # noqa: E402
+from agent_ops.agent.schemas import (  # noqa: E402
+    Decision,
+    DecisionAction,
+    Intent,
+    IntentResult,
+    Plan,
+)
+from agent_ops.llm.base import JudgeResult, LLMProvider  # noqa: E402
+
+
+class _StubProvider(LLMProvider):
+    """Minimal provider; subclasses override decide/compose_reply."""
+
+    def classify(self, request_text):
+        return IntentResult(intent=Intent.order_status, confidence=0.9)
+
+    def plan(self, intent, request_text, context):
+        return Plan(intent=Intent.order_status, summary="stub", steps=[])
+
+    def decide(self, view):
+        return Decision(action=DecisionAction.finish)
+
+    def compose_reply(self, view):
+        return "ok"
+
+    def score_reply(self, rubric, reply):
+        return JudgeResult(score=1.0, verdict="pass")
+
+    def compare(self, rubric, a, b):
+        return "A", JudgeResult(score=1.0, verdict="A")
+
+
+def _run_with(provider: LLMProvider, **state_kw):
+    from agent_ops.agent.state import new_state
+
+    g = build_graph()
+    st = new_state(
+        run_id=state_kw.pop("run_id", "stub"), request_text="where is my order", **state_kw
+    )
+    cfg = {"configurable": {"provider": provider, "thread_id": st["run_id"]}, "recursion_limit": 40}
+    return g.invoke(st, config=cfg)
+
+
+def test_loop_breaker_escalates_on_repeated_tool_call():
+    class Loopy(_StubProvider):
+        def decide(self, view):
+            # Always call the same tool with the same args -> a runaway loop.
+            return Decision(
+                action=DecisionAction.call_tool,
+                tool="get_order",
+                args={"order_id": "ORD-000001"},
+                confidence=1.0,
+            )
+
+    final = _run_with(Loopy(), run_id="loop", customer_id="CUST-00001")
+    assert final["escalated"] is True
+    assert any(e.get("decision") == "loop_break" for e in final["trace_events"])
+    # It must not have spun all the way to the iteration cap.
+    assert final["iterations"] <= 3
+
+
+def test_grounding_guard_escalates_on_hallucinated_order_id():
+    class Halluc(_StubProvider):
+        def decide(self, view):
+            return Decision(action=DecisionAction.finish)
+
+        def compose_reply(self, view):
+            return "Good news — your order ORD-999999 was delivered yesterday!"
+
+    final = _run_with(Halluc(), run_id="halluc", customer_id="CUST-00001")
+    assert final["escalated"] is True
+    assert any(e.get("decision") == "grounding_fail" for e in final["trace_events"])
+    # The hallucinated id must not reach the customer reply.
+    assert "ORD-999999" not in final["resolution"]["customer_reply"]
