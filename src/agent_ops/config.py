@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # --- Async worker pool ---
     worker_concurrency: int = Field(default=2)  # max tickets resolved in parallel
 
+    # --- Durable queue ---
+    # "thread" = in-process pool (default, zero setup, used by CI/cold clone);
+    # "redis"  = RQ workers on Redis (retries, timeouts, dead-letter, restart-safe).
+    queue_backend: str = Field(default="thread")  # "thread" | "redis"
+    redis_url: str = Field(default="redis://localhost:6379/0")
+
     def _resolve(self, p: str) -> Path:
         path = Path(p)
         return path if path.is_absolute() else REPO_ROOT / path

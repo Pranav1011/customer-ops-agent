@@ -12,13 +12,40 @@ services:
     environment:
       LLM_PROVIDER: mock
       WORKER_CONCURRENCY: "2"
+      QUEUE_BACKEND: redis          # durable queue; jobs survive a worker crash
+      REDIS_URL: redis://redis:6379/0
       # LLM_PROVIDER: ollama
       # OLLAMA_BASE_URL: http://host.docker.internal:11434
       # OLLAMA_MODEL: llama3.1:8b
     volumes:
       - aurora-data:/data
+    depends_on:
+      - redis
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # Dedicated RQ worker. On start it re-queues any job an earlier worker left
+  # mid-flight (crash recovery), then consumes the durable queue.
+  worker:
+    build: .
+    command: >
+      sh -c "python -c 'from agent_ops.reliability.reconcile import reconcile_orphans; reconcile_orphans()'
+             && rq worker aurora --url redis://redis:6379/0"
+    environment:
+      LLM_PROVIDER: mock
+      QUEUE_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - aurora-data:/data
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
 
 volumes:
   aurora-data:

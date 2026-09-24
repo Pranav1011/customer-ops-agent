@@ -46,6 +46,18 @@ the deterministic guardrails caught every misstep and it never took an unsafe ac
 *Safety is decoupled from model quality* — which is the whole point of the reliability
 layer. Full table: [`docs/model-comparison.md`](docs/model-comparison.md).
 
+## Reliability (production plumbing)
+
+| Guarantee | How | Proof |
+|---|---|---|
+| **Exactly-once writes.** A duplicate ticket delivery never issues a second refund | Idempotency key `sha256(ticket, tool, validated args)` enforced in `ToolRegistry.run()` | `tests/test_idempotency.py` |
+| **Durable queue.** Jobs survive process death, with retries, backoff, timeout and dead-letter | Redis/RQ behind `QUEUE_BACKEND=redis` (the thread pool stays the zero-dependency default) | `tests/test_queue_backend.py` |
+| **Crash recovery.** A job orphaned by a killed worker resumes on restart with no double action | Startup reconcile re-queues orphans; idempotency makes the re-run safe | `tests/test_queue_reliability.py` |
+| **Concurrent throughput.** **3.69× at 4 workers** (8.2 → 30.3 tickets/s) | Worker pool overlaps I/O-bound tickets (simulated 100 ms LLM latency) | `python -m agent_ops.bench` → [`benchmarks/results/`](benchmarks/results/) |
+
+Design decisions and rejected alternatives: [`ENGINEERING_LOG.md`](ENGINEERING_LOG.md).
+`docker compose up` runs the API, a dedicated RQ worker and Redis.
+
 ---
 
 ## Quickstart

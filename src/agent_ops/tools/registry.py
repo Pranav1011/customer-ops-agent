@@ -89,6 +89,19 @@ class ToolRegistry:
             validated = spec.args_model(**(args or {}))
         except ValidationError as e:
             return ToolResult(ok=False, error=_format_validation_error(e))
+        # Consequential writes tied to a ticket run exactly once: a duplicate
+        # delivery or a retried job replays the stored result instead of acting
+        # again. Lazy import avoids a module-load cycle (reliability imports here).
+        if spec.kind == "write" and ctx.ticket_id is not None:
+            from agent_ops.reliability import idempotency
+
+            key = idempotency.idempotency_key(ctx.ticket_id, name, validated.model_dump())
+            replay = idempotency.get_completed(key)
+            if replay is not None:
+                return replay
+            result = spec.func(ctx, validated)
+            idempotency.record(key, name, ctx.ticket_id, result)
+            return result
         return spec.func(ctx, validated)
 
 

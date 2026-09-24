@@ -44,9 +44,14 @@ def _set_status(job_id: str, **fields: Any) -> None:
         job.updated_at = _now()
 
 
-def _process(
+def process_job(
     job_id: str, body: str, ticket_id: str, customer_id: str | None, order_id: str | None
 ) -> None:
+    """Run one ticket to completion and record the outcome on its Job row.
+
+    Module-level and importable by name so an out-of-process RQ worker can run it
+    (`agent_ops.api.worker.process_job`); the in-process ThreadPool backend calls
+    it directly. Idempotency makes a re-run after a crash safe."""
     _set_status(job_id, status="running")
     try:
         r = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id, order_id=order_id)
@@ -70,10 +75,37 @@ def enqueue(
 ) -> str:
     """Create a queued Job and submit it to the worker pool. Returns the job id."""
     job_id = f"JOB-{uuid.uuid4().hex[:8]}"
+    payload = {"body": body, "customer_id": customer_id, "order_id": order_id}
     with session_scope() as s:
-        s.add(Job(id=job_id, ticket_id=ticket_id, status="queued"))
-    _executor().submit(_process, job_id, body, ticket_id, customer_id, order_id)
+        s.add(Job(id=job_id, ticket_id=ticket_id, status="queued", payload=payload))
+    _dispatch(job_id, body, ticket_id, customer_id, order_id)
     return job_id
+
+
+def _dispatch(
+    job_id: str, body: str, ticket_id: str, customer_id: str | None, order_id: str | None
+) -> None:
+    """Hand a job to the configured backend: the durable Redis/RQ queue, or the
+    in-process thread pool."""
+    if get_settings().queue_backend == "redis":
+        from agent_ops.api.queue_redis import enqueue_redis
+
+        enqueue_redis(job_id, body, ticket_id, customer_id, order_id)
+    else:
+        _executor().submit(process_job, job_id, body, ticket_id, customer_id, order_id)
+
+
+def requeue(job_id: str, payload: dict[str, Any], ticket_id: str | None) -> None:
+    """Re-dispatch an existing crash-orphaned job under its own id, from the
+    payload persisted at enqueue time. Idempotency keeps the re-run safe."""
+    _set_status(job_id, status="queued")
+    _dispatch(
+        job_id,
+        str(payload.get("body", "")),
+        ticket_id or "",
+        payload.get("customer_id"),
+        payload.get("order_id"),
+    )
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:

@@ -140,8 +140,26 @@ class Job(SQLModel, table=True):
     run_id: str | None = None
     error: str | None = None
     result: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Enqueue args, persisted so a crash-orphaned job can be re-queued on restart
+    # (the DB is the source of truth; idempotency makes the re-run safe).
+    payload: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class IdempotencyKey(SQLModel, table=True):
+    """Records that a consequential write already ran, so a duplicate delivery or
+    retry replays the stored result instead of executing the action twice.
+
+    `key` = sha256(ticket_id, tool, canonical args) — see reliability/idempotency.py.
+    Only *successful* writes are recorded; failed writes stay retryable.
+    """
+
+    key: str = Field(primary_key=True)
+    tool: str = ""
+    ticket_id: str | None = Field(default=None, index=True)
+    result: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 ALL_TABLES = [
@@ -156,4 +174,5 @@ ALL_TABLES = [
     MemoryProfile,
     Escalation,
     Job,
+    IdempotencyKey,
 ]
