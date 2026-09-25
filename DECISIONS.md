@@ -11,8 +11,8 @@ via `LLM_PROVIDER=mock`. It emits structured plans and tool-calls deterministica
 from rule-based per-intent handlers. A `ChatAnthropic` provider (`LLM_PROVIDER=anthropic`)
 is wired but inactive until an API key is added.
 **Rejected:** Requiring a live API key from day one.
-**Why:** No key was available at build time, and — more importantly — the interview
-signal of this project is the *machinery around the model* (real actions, guardrails,
+**Why:** No key was available at build time, and — more importantly — the substance
+of this project is the *machinery around the model* (real actions, guardrails,
 memory, tracing, evals), all of which is genuinely exercised by a deterministic mock.
 A deterministic model also makes the whole system and the eval harness reproducible in
 CI with zero cost. Swapping to real reasoning is a single env var; the same eval harness
@@ -55,7 +55,7 @@ stores as tables, read on intake and written on resolve.
 **Rejected:** Mem0 / LangMem / Zep.
 **Why:** At this scope a framework is more surface area than value. The taxonomy
 (short-term / episodic / semantic / procedural) is demonstrated explicitly in our own
-code, which reads better in an interview than delegating it to a black box.
+code, which keeps each memory type inspectable and testable instead of hidden in a framework.
 
 ### D8 — Guardrails enforced at a single choke point in the agent loop
 **Chose:** A deterministic, LLM-free policy engine (`policy/engine.py`) called from the

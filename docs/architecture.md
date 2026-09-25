@@ -33,7 +33,7 @@ everything.
 1. **intake** — classify intent (cheap model role), load customer profile + history +
    long-term memory, attach the (untrusted) ticket text.
 2. **plan** — emit a structured `Plan` (ordered steps, the tool each needs, expected
-   outcome, risk level). This is the most interview-legible artifact; the prompt lives in
+   outcome, risk level). This is the most inspectable artifact in the trace; the prompt lives in
    a versioned file.
 3. **act** — ReAct-style tool loop. After each tool result the agent decides the next
    step. A `SqliteSaver` checkpointer holds thread state (short-term memory). Hard
