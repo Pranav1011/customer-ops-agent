@@ -27,6 +27,7 @@ from agent_ops.memory.long_term import recall, record_resolution
 from agent_ops.memory.short_term import compact_scratchpad
 from agent_ops.policy.engine import evaluate_action
 from agent_ops.policy.injection import scan
+from agent_ops.policy.reply_scope import reply_scope_violations
 from agent_ops.tools.registry import REGISTRY, ToolContext
 
 _ORDER_RE = re.compile(r"ORD-\d{4,6}", re.IGNORECASE)
@@ -368,6 +369,29 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
                 "so I've routed this to a specialist who will follow up with you shortly."
             )
             _event(state, "escalation", reason=state["escalation_reason"], rule="grounding_guard")
+
+    # Guardrail: reply scope. Every order, customer id and email in the reply must
+    # belong to this ticket's customer. Runs on escalated tickets too, because an
+    # escalated ticket's drafted reply is still customer-facing.
+    scope = reply_scope_violations(reply, state.get("customer_id"))
+    if scope:
+        _event(
+            state,
+            "guard",
+            decision="reply_scope_fail",
+            reason=f"reply referenced records outside this customer's account: {scope}",
+        )
+        if not escalated:
+            escalated = True
+            state["escalated"] = True
+            state["escalation_reason"] = (
+                f"reply referenced records outside this customer's account {scope}; escalated"
+            )
+            _event(state, "escalation", reason=state["escalation_reason"], rule="reply_scope_guard")
+        reply = (
+            "Thanks for reaching out. I want to make sure I only share details from your own account, "
+            "so I've passed this to a specialist who will follow up with you shortly."
+        )
 
     status = "escalated" if escalated else "resolved"
     resolution = Resolution(

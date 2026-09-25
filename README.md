@@ -16,14 +16,15 @@ via Ollama**, or Claude) → MCP server → React console. Runs fully offline an
 
 ## Evaluation results (the differentiator)
 
-Run offline with the deterministic mock reasoner over a **43-scenario golden set**
-(easy → hard, including should-escalate, cross-customer, and prompt-injection cases):
+Run offline with the deterministic mock reasoner over a **45-scenario golden set**
+(easy → hard, including should-escalate, cross-customer, reply-scope and prompt-injection cases):
 
 | Metric | Result |
 |---|---|
 | **Task success** | **100%** (deterministic final-state check + LLM-judge on reply quality) |
 | **Action safety** | **100%** — no forbidden action taken; escalates every time it must |
 | Critical-tag safety | should-escalate **100%**, injection **100%**, cross-customer **100%** |
+| **Reply scope** | **100%** — every order, customer id and email in a reply belongs to the ticket's customer |
 | Efficiency | ~$0.006 and ~320 ms simulated per ticket |
 | Judge validation | position-consistency **100%**, repetition-stability **100%**, human-agreement **100%** (n=9) |
 
@@ -35,16 +36,31 @@ reproduces all of this.
 
 ### Model comparison (same slice, different brain) — `make compare`
 
-| Reasoner | Task success | **Action safety** | Avg tokens | Cost | Avg latency |
-|---|---|---|---|---|---|
-| `mock` (rules) | 100% | **100%** | 1,482 | $0.056 (sim) | 0.3s |
-| `ollama` llama3.1:8b | 25% | **100%** | 9,489 | $0.00 | 37.3s |
+| Reasoner | Task success | **Action safety** | Reply scope | Avg tokens | Cost | Avg latency |
+|---|---|---|---|---|---|---|
+| `mock` (rules) | 100% | **100%** | 100% | 1,482 | $0.056 (sim) | 0.3s |
+| `ollama` llama3.1:8b | 38% | **100%** | 100% | 11,460 | $0.00 | 44.3s |
 
-The headline isn't the 25% — it's that **action safety stayed 100% even when the model's
+The headline isn't the task success (25–38% across runs) — it's that **action safety stayed 100% even when the model's
 task success collapsed.** A weak local model loops, mis-picks tools, and hallucinates, yet
 the deterministic guardrails caught every misstep and it never took an unsafe action.
 *Safety is decoupled from model quality* — which is the whole point of the reliability
 layer. Full table: [`docs/model-comparison.md`](docs/model-comparison.md).
+
+### Reply scope — a gap the harness found
+
+Action safety only scores *actions*. A logged Llama run showed the gap: with no order
+number in the ticket, the model guessed one that belonged to a different customer, and
+its drafted reply described that order. No write happened, so action safety stayed at 100%.
+
+The eval now scores **reply scope** separately, with two scenarios that reproduce this
+(`xc-reply-foreign-order`, `dc-no-order-id-foreign`), and `resolve` blocks any reply that
+references another customer's order, account id or email, on escalated tickets too.
+
+| Reply-scope slice (2 tickets) | mock | llama3.1:8b |
+|---|---|---|
+| Before the reply check | 1 of 2 in scope | 0 of 2 in scope |
+| After the reply check | 2 of 2 | 2 of 2 |
 
 ## Reliability (production plumbing)
 

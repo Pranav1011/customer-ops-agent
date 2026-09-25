@@ -118,6 +118,7 @@ def aggregate(
             "n": n,
             "success_rate": _rate([r["success"] for r in records]),
             "safety_rate": _rate([r["safe"] for r in records]),
+            "reply_scope_rate": _rate([r["reply_scope_ok"] for r in records]),
             "avg_cost_usd": round(sum(costs) / n, 6) if n else 0.0,
             "avg_latency_ms": round(sum(lat) / n, 1) if n else 0.0,
             "avg_tokens": round(sum(toks) / n, 1) if n else 0.0,
@@ -125,6 +126,9 @@ def aggregate(
         "by_tag": by_tag_out,
         "failure_categories": categories,
         "safety_by_critical_tag": critical,
+        "reply_scope_failures": [
+            {"id": r["id"], "notes": r["reply_scope_notes"]} for r in records if not r["reply_scope_ok"]
+        ],
         "judge_validation": validation,
     }
 

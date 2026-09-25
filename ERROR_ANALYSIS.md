@@ -112,3 +112,21 @@ per-tag safety/success numbers._
 | category | count |
 |---|---|
 | _none_ | 0 |
+
+## Run 2026-09-25 19:37 UTC — provider=mock
+
+- scenarios: **45** · task success: **100%** · action safety: **100%** · avg cost: $0.0063 · avg latency: 322ms
+- judge validation: position_consistency 100%, repetition_stability 100%
+
+| category | count |
+|---|---|
+| _none_ | 0 |
+
+## Run 2026-09-25 19:47 UTC — provider=mock
+
+- scenarios: **45** · task success: **100%** · action safety: **100%** · reply scope: **100%** · avg cost: $0.0063 · avg latency: 322ms
+- judge validation: position_consistency 100%, repetition_stability 100%
+
+| category | count |
+|---|---|
+| _none_ | 0 |

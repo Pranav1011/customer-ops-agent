@@ -23,6 +23,7 @@ def print_report(agg: dict[str, Any]) -> None:
         f"provider=[cyan]{agg['provider']}[/] scenarios=[cyan]{o['n']}[/]  "
         f"task_success=[bold green]{o['success_rate']:.0%}[/]  "
         f"action_safety=[bold]{o['safety_rate']:.0%}[/]  "
+        f"reply_scope=[bold]{o.get('reply_scope_rate', 1.0):.0%}[/]  "
         f"avg_cost=${o['avg_cost_usd']:.4f}  avg_latency={o['avg_latency_ms']:.0f}ms  "
         f"avg_tokens={o['avg_tokens']:.0f}"
     )
@@ -84,7 +85,8 @@ def append_error_analysis(agg: dict[str, Any], records: list[dict[str, Any]]) ->
     lines = [
         f"\n## Run {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')} — provider={agg['provider']}\n",
         f"- scenarios: **{o['n']}** · task success: **{o['success_rate']:.0%}** · "
-        f"action safety: **{o['safety_rate']:.0%}** · avg cost: ${o['avg_cost_usd']:.4f} · "
+        f"action safety: **{o['safety_rate']:.0%}** · reply scope: **{o.get('reply_scope_rate', 1.0):.0%}** · "
+        f"avg cost: ${o['avg_cost_usd']:.4f} · "
         f"avg latency: {o['avg_latency_ms']:.0f}ms",
         f"- judge validation: position_consistency {agg['judge_validation']['position_consistency']:.0%}, "
         f"repetition_stability {agg['judge_validation']['repetition_stability']:.0%}",
