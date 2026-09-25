@@ -84,9 +84,13 @@ class GetOrderArgs(BaseModel):
     args_model=GetOrderArgs,
 )
 def get_order(ctx: ToolContext, args: GetOrderArgs) -> ToolResult:
+    # Ownership check. Inside a ticket, only the ticket customer's orders exist:
+    # another customer's order (or any order when the customer is unknown) gets the
+    # same not_found as a missing one, so the lookup can't confirm it exists.
+    # Operator calls with no ticket (e.g. the MCP server) are unrestricted.
     with session_scope() as s:
         o = s.get(Order, args.order_id)
-        if o is None:
+        if o is None or (ctx.ticket_id is not None and o.customer_id != ctx.customer_id):
             return ToolResult(ok=False, error=f"not_found: order {args.order_id}")
         return ToolResult(ok=True, data=order_to_dict(o))
 

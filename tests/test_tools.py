@@ -34,11 +34,13 @@ def test_read_tools_registered():
 
 def test_get_order_ok_and_not_found():
     o = _a_shipped_order()
-    res = REGISTRY.run("get_order", {"order_id": o["id"]}, CTX)
+    # Inside a ticket, get_order only sees the ticket customer's orders.
+    owner_ctx = ToolContext(run_id="test", ticket_id="TCK-TEST", customer_id=o["customer_id"])
+    res = REGISTRY.run("get_order", {"order_id": o["id"]}, owner_ctx)
     assert res.ok and res.data["order_id"] == o["id"]
     assert res.data["status"] == "shipped"
 
-    missing = REGISTRY.run("get_order", {"order_id": "ORD-999999"}, CTX)
+    missing = REGISTRY.run("get_order", {"order_id": "ORD-999999"}, owner_ctx)
     assert not missing.ok and "not_found" in missing.error
 
 

@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 UV := uv
 
-.PHONY: help install seed dev eval test lint fmt clean reset ui ui-install
+.PHONY: help install seed dev eval compare compare-repeat test lint fmt clean reset ui ui-install
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -30,6 +30,9 @@ eval: ## Run the eval harness over the golden dataset and print the report
 
 compare: ## Compare brains (mock vs ollama) on a slice -> docs/model-comparison.md
 	$(UV) run python -m agent_ops.eval.compare
+
+compare-repeat: ## Repeat the comparison slice on ollama (RUNS=5) and report ranges -> docs/model-comparison-repeat.md
+	$(UV) run python -m agent_ops.eval.repeat
 
 mcp: ## Serve the tool layer as an MCP server over stdio (for Claude Desktop/Cursor)
 	$(UV) run python -m agent_ops.mcp_server
