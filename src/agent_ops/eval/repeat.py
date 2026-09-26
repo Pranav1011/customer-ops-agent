@@ -1,6 +1,7 @@
 """Repeat the model comparison on the real LLM and report ranges, not one run.
 
-`make compare-repeat` (RUNS=5 by default). A small local model varies from run to
+`make compare-repeat` (RUNS=5 by default). `make target-repeat` (TARGET=<scenario id>,
+RUNS=30 by default) repeats one scenario and writes docs/target-repeat-<id>.{json,md}. A small local model varies from run to
 run, so a single run can over- or under-state it. This runs the 8-scenario
 comparison slice RUNS times on Ollama (plus the reply-scope slice once), keeps every
 per-scenario record, and writes docs/model-comparison-repeat.{json,md}.
@@ -22,9 +23,14 @@ def _forbidden(rec: dict) -> list[str]:
 
 def _row(r: dict) -> dict:
     return {
-        "id": r["id"], "success": r["success"], "safe": r["safe"], "safety_notes": r["safety_notes"],
-        "forbidden_actions": _forbidden(r), "reply_scope_ok": r["reply_scope_ok"],
-        "reply_scope_notes": r["reply_scope_notes"], "status": r["status"],
+        "id": r["id"],
+        "success": r["success"],
+        "safe": r["safe"],
+        "safety_notes": r["safety_notes"],
+        "forbidden_actions": _forbidden(r),
+        "reply_scope_ok": r["reply_scope_ok"],
+        "reply_scope_notes": r["reply_scope_notes"],
+        "status": r["status"],
     }
 
 
@@ -33,7 +39,12 @@ def run(runs: int) -> dict:
     by_id = {s["id"]: s for s in load_scenarios()}
     slice8 = [by_id[i] for i in compare.SLICE]
     scope = [by_id[i] for i in compare.REPLY_SCOPE_SLICE]
-    out: dict = {"model": "llama3.1:8b", "slice": compare.SLICE, "runs": [], "scope_slice": compare.REPLY_SCOPE_SLICE}
+    out: dict = {
+        "model": "llama3.1:8b",
+        "slice": compare.SLICE,
+        "runs": [],
+        "scope_slice": compare.REPLY_SCOPE_SLICE,
+    }
     for _ in range(runs):
         compare._set_provider("ollama")
         out["runs"].append([_row(run_one(s)) for s in slice8])
@@ -53,11 +64,20 @@ def summarize(out: dict) -> dict:
         "handled_max": max(handled),
         # Ticket runs with at least one forbidden write (one bad write can produce
         # several notes, e.g. "forbidden action" and "injection caused a write").
-        "forbidden_action_ticket_runs": sum(bool(r["forbidden_actions"]) for run in out["runs"] for r in run),
-        "forbidden_action_tickets": sorted(
-            {f"run {i + 1}: {r['id']}" for i, run in enumerate(out["runs"]) for r in run if r["forbidden_actions"]}
+        "forbidden_action_ticket_runs": sum(
+            bool(r["forbidden_actions"]) for run in out["runs"] for r in run
         ),
-        "reply_scope_violations_total": sum(not r["reply_scope_ok"] for run in out["runs"] for r in run),
+        "forbidden_action_tickets": sorted(
+            {
+                f"run {i + 1}: {r['id']}"
+                for i, run in enumerate(out["runs"])
+                for r in run
+                if r["forbidden_actions"]
+            }
+        ),
+        "reply_scope_violations_total": sum(
+            not r["reply_scope_ok"] for run in out["runs"] for r in run
+        ),
         "ticket_runs": n * len(out["runs"]),
         "scope_slice_in_scope": sum(r["reply_scope_ok"] for r in out["scope_run"]),
         "scope_slice_n": len(out["scope_run"]),
@@ -68,7 +88,9 @@ def write(out: dict) -> None:
     s = summarize(out)
     out["summary"] = s
     per_run = ", ".join(f"{h}/{s['tickets_per_run']}" for h in s["handled_per_run"])
-    (REPO_ROOT / "docs" / "model-comparison-repeat.json").write_text(json.dumps(out, indent=2) + "\n")
+    (REPO_ROOT / "docs" / "model-comparison-repeat.json").write_text(
+        json.dumps(out, indent=2) + "\n"
+    )
     lines = [
         "# Model comparison, repeated",
         "",
@@ -89,8 +111,53 @@ def write(out: dict) -> None:
     print("\n".join(lines))
 
 
+def run_target(scenario_id: str, runs: int) -> dict:
+    """Repeat a single scenario on Ollama, e.g. the injection ticket behind a failure."""
+    compare._prep_storage()
+    scenario = {s["id"]: s for s in load_scenarios()}[scenario_id]
+    compare._set_provider("ollama")
+    return {
+        "model": "llama3.1:8b",
+        "scenario": scenario_id,
+        "runs": [_row(run_one(scenario)) for _ in range(runs)],
+    }
+
+
+def write_target(out: dict) -> None:
+    rows = out["runs"]
+    n = len(rows)
+    summary = {
+        "runs": n,
+        "forbidden_action_runs": sum(bool(r["forbidden_actions"]) for r in rows),
+        "reply_scope_violations": sum(not r["reply_scope_ok"] for r in rows),
+        "escalated": sum(r["status"] == "escalated" for r in rows),
+        "resolved": sum(r["status"] == "resolved" for r in rows),
+    }
+    out["summary"] = summary
+    stem = REPO_ROOT / "docs" / f"target-repeat-{out['scenario']}"
+    stem.with_suffix(".json").write_text(json.dumps(out, indent=2) + "\n")
+    lines = [
+        f"# `{out['scenario']}`, repeated",
+        "",
+        f"One scenario run {n} times on `{out['model']}`. Generated by `make target-repeat`.",
+        "",
+        "| Metric | Result |",
+        "|---|---|",
+        f"| Runs with a forbidden action | {summary['forbidden_action_runs']} of {n} |",
+        f"| Reply-scope violations | {summary['reply_scope_violations']} of {n} |",
+        f"| Outcome | {summary['escalated']} escalated, {summary['resolved']} resolved |",
+        "",
+    ]
+    stem.with_suffix(".md").write_text("\n".join(lines))
+    print("\n".join(lines))
+
+
 def main() -> None:
-    write(run(int(os.environ.get("RUNS", "5"))))
+    target = os.environ.get("TARGET")
+    if target:
+        write_target(run_target(target, int(os.environ.get("RUNS", "30"))))
+    else:
+        write(run(int(os.environ.get("RUNS", "5"))))
 
 
 if __name__ == "__main__":

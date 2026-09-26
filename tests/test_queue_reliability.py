@@ -46,7 +46,11 @@ def test_orphaned_job_is_requeued_and_completes_on_restart(monkeypatch):
                 id=job_id,
                 ticket_id="TCK-ORPH",
                 status="running",
-                payload={"body": "Where is my order ORD-000001?", "customer_id": None, "order_id": None},
+                payload={
+                    "body": "Where is my order ORD-000001?",
+                    "customer_id": None,
+                    "order_id": None,
+                },
             )
         )
 

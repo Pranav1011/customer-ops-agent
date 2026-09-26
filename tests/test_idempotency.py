@@ -43,7 +43,9 @@ def test_duplicate_refund_executes_once():
 
 def test_distinct_partial_refunds_not_collapsed():
     order_id, customer_id, before = _pick_order(10.0)
-    ctx = ToolContext(run_id="rt-idem-partial", ticket_id="TCK-IDEM-PARTIAL", customer_id=customer_id)
+    ctx = ToolContext(
+        run_id="rt-idem-partial", ticket_id="TCK-IDEM-PARTIAL", customer_id=customer_id
+    )
 
     r1 = REGISTRY.run("issue_refund", {"order_id": order_id, "amount": 3.0, "reason": "a"}, ctx)
     r2 = REGISTRY.run("issue_refund", {"order_id": order_id, "amount": 4.0, "reason": "b"}, ctx)

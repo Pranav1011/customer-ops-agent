@@ -34,6 +34,7 @@ class AgentState(TypedDict, total=False):
     # Tool loop working memory.
     scratchpad: list[dict[str, Any]]  # [{tool, args, result}]
     call_sigs: list[str]  # signatures of executed tool calls, for loop detection
+    blocked_writes: list[str]  # write tools the policy engine blocked on this ticket
     iterations: int
     identity_verified: bool | None
 
@@ -72,6 +73,7 @@ def new_state(
         injection_detected=False,
         scratchpad=[],
         call_sigs=[],
+        blocked_writes=[],
         iterations=0,
         identity_verified=None,
         done=False,

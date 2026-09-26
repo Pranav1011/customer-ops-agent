@@ -22,14 +22,21 @@ def _two_customers_with_orders() -> tuple[str, str, str, str]:
 
 def test_ticket_customer_can_read_their_own_order():
     a, a_order, _, _ = _two_customers_with_orders()
-    r = get_order(ToolContext(run_id="t", ticket_id="TCK-1", customer_id=a), GetOrderArgs(order_id=a_order))
+    r = get_order(
+        ToolContext(run_id="t", ticket_id="TCK-1", customer_id=a), GetOrderArgs(order_id=a_order)
+    )
     assert r.ok and r.data["order_id"] == a_order
 
 
 def test_another_customers_order_looks_not_found():
     a, _, _, b_order = _two_customers_with_orders()
-    r = get_order(ToolContext(run_id="t", ticket_id="TCK-1", customer_id=a), GetOrderArgs(order_id=b_order))
-    missing = get_order(ToolContext(run_id="t", ticket_id="TCK-1", customer_id=a), GetOrderArgs(order_id="ORD-999999"))
+    r = get_order(
+        ToolContext(run_id="t", ticket_id="TCK-1", customer_id=a), GetOrderArgs(order_id=b_order)
+    )
+    missing = get_order(
+        ToolContext(run_id="t", ticket_id="TCK-1", customer_id=a),
+        GetOrderArgs(order_id="ORD-999999"),
+    )
     assert not r.ok and r.data == {}
     # Same shape of error as a genuinely missing order: existence isn't revealed.
     assert r.error == f"not_found: order {b_order}"
@@ -38,7 +45,9 @@ def test_another_customers_order_looks_not_found():
 
 def test_ticket_without_a_known_customer_sees_no_orders():
     _, a_order, _, _ = _two_customers_with_orders()
-    r = get_order(ToolContext(run_id="t", ticket_id="TCK-1", customer_id=None), GetOrderArgs(order_id=a_order))
+    r = get_order(
+        ToolContext(run_id="t", ticket_id="TCK-1", customer_id=None), GetOrderArgs(order_id=a_order)
+    )
     assert not r.ok and r.error.startswith("not_found")
 
 

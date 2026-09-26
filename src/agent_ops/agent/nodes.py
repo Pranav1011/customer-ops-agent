@@ -251,6 +251,45 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
         )
         _event(state, "tool_call", tool=tool, args=decision.args, result=res)
     elif spec.kind == "write":
+        # Guardrail: no autonomous writes on a ticket flagged for prompt injection.
+        # The policy engine judges each write in isolation, so an injected request
+        # can be steered down to an amount the rules allow; on a flagged ticket
+        # any refund, credit or cancellation goes to a human instead.
+        if state.get("injection_detected"):
+            _event(
+                state,
+                "guard",
+                tool=tool,
+                effect="escalate",
+                rule="injection_no_autonomous_writes",
+                reason=f"write '{tool}' requested on a ticket flagged for prompt injection",
+            )
+            _do_escalate(
+                state,
+                f"write '{tool}' requested on a ticket flagged for prompt injection",
+                rule="injection_no_autonomous_writes",
+            )
+            return state
+
+        # Guardrail: no retrying around a block. Once the policy engine has blocked
+        # a write of this type on this ticket, a second attempt (e.g. the same refund
+        # at a smaller amount) escalates instead of being re-evaluated.
+        if tool in state.get("blocked_writes", []):
+            _event(
+                state,
+                "guard",
+                tool=tool,
+                effect="escalate",
+                rule="blocked_write_retry",
+                reason=f"'{tool}' retried after the policy engine blocked it on this ticket",
+            )
+            _do_escalate(
+                state,
+                f"'{tool}' retried after the policy engine blocked it on this ticket",
+                rule="blocked_write_retry",
+            )
+            return state
+
         # Guardrail 1: confidence gating — a low-confidence write escalates.
         if decision.confidence < settings.confidence_threshold:
             _do_escalate(
@@ -275,6 +314,7 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
             _do_escalate(state, policy.reason, rule=policy.rule)
             return state
         if policy.effect == "block":
+            state.setdefault("blocked_writes", []).append(tool)
             res = {
                 "ok": False,
                 "data": {},
