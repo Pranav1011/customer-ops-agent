@@ -402,6 +402,7 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
             )
             escalated = True
             state["escalated"] = True
+            state["stop_reason"] = "escalate"
             state["escalation_reason"] = (
                 f"reply referenced ungrounded order id(s) {ungrounded}; escalated to avoid a hallucinated claim"
             )
@@ -425,6 +426,7 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
         if not escalated:
             escalated = True
             state["escalated"] = True
+            state["stop_reason"] = "escalate"
             state["escalation_reason"] = (
                 f"reply referenced records outside this customer's account {scope}; escalated"
             )

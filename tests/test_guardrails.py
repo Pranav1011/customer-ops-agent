@@ -174,3 +174,5 @@ def test_grounding_guard_escalates_on_hallucinated_order_id():
     assert any(e.get("decision") == "grounding_fail" for e in final["trace_events"])
     # The hallucinated id must not reach the customer reply.
     assert "ORD-999999" not in final["resolution"]["customer_reply"]
+    # The run stopped on an escalation, not a clean finish.
+    assert final["stop_reason"] == "escalate"

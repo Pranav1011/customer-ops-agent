@@ -90,6 +90,7 @@ def test_guard_blocks_foreign_order_in_a_resolved_reply():
 
     final = _run_with(Leaky(), run_id="scope-resolved", customer_id=a)
     assert final["escalated"] is True
+    assert final["stop_reason"] == "escalate"
     assert any(e.get("decision") == "reply_scope_fail" for e in final["trace_events"])
     assert b_order not in final["resolution"]["customer_reply"]
 
