@@ -2,7 +2,7 @@
 
 A ticket that escalates on several runs (a re-run, or the escalate tool plus the
 run's own escalation) keeps one open escalation that points at the latest run.
-A run that resolves the ticket closes it.
+Only a human closes it: a later run that resolves the ticket leaves it open.
 """
 
 from __future__ import annotations
@@ -54,12 +54,3 @@ def open_escalation(
     s.add(esc)
     s.flush()
     return esc
-
-
-def resolve_open_escalations(s: Session, ticket_id: str) -> None:
-    """Close every open escalation on a ticket that a later run resolved."""
-    for esc in s.exec(
-        select(Escalation).where(Escalation.ticket_id == ticket_id, Escalation.status == "open")
-    ).all():
-        esc.status = "resolved"
-        s.add(esc)

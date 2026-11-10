@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import func, update
 from sqlmodel import select
 
 from agent_ops.backend.db import session_scope
@@ -30,6 +31,8 @@ from agent_ops.backend.transitions import SUBSCRIPTION_TRANSITIONS, transition_e
 from agent_ops.tools.registry import ToolContext, ToolResult, register
 
 _CRM_ALLOWED_FIELDS = {"prefers_channel", "notes", "tier"}
+# Tools undo_action knows how to reverse.
+_UNDOABLE = ("issue_refund", "update_shipping_address", "update_crm_record")
 
 
 def _log(
@@ -73,49 +76,64 @@ class IssueRefundArgs(BaseModel):
     args_model=IssueRefundArgs,
 )
 def issue_refund(ctx: ToolContext, args: IssueRefundArgs) -> ToolResult:
+    refund_id = f"RFN-{uuid.uuid4().hex[:8].upper()}"
     with session_scope() as s:
-        o = s.get(Order, args.order_id)
-        if o is None:
-            res = {"error": f"not_found: order {args.order_id}"}
-            _log(ctx, "issue_refund", args.model_dump(), res, ok=False, reversible=False)
-            return ToolResult(ok=False, error=res["error"])
-        paid, remaining = refundable_remaining(s, o)
-        if args.amount > remaining + 1e-6:
-            res = {
-                "error": (
-                    f"conflict: refund {args.amount} exceeds refundable {remaining} on order "
-                    f"{o.id} (paid {paid}, already refunded {o.refunded_amount})"
-                )
-            }
-            _log(ctx, "issue_refund", args.model_dump(), res, ok=False, reversible=False)
-            return ToolResult(ok=False, error=res["error"])
-
-        prior = o.refunded_amount
-        o.refunded_amount = round(prior + args.amount, 2)
-        refund_id = f"RFN-{uuid.uuid4().hex[:8].upper()}"
-        s.add(
-            Payment(
-                id=refund_id,
-                customer_id=o.customer_id,
-                order_id=o.id,
-                amount=args.amount,
-                status="refunded",
-                method="card",
-                created_at=datetime.now(UTC),
-            )
+        # The cap check and the increment are one conditional UPDATE, issued
+        # before any read so SQLite takes the write lock on fresh data: two
+        # concurrent refunds cannot both pass the cap.
+        paid = (
+            select(func.coalesce(func.sum(Payment.amount), 0.0))
+            .where(Payment.order_id == args.order_id, Payment.status == "succeeded")
+            .scalar_subquery()
         )
-        data = {
-            "refund_id": refund_id,
-            "order_id": o.id,
-            "amount": args.amount,
-            "reason": args.reason,
-            "order_refunded_total": o.refunded_amount,
-            "_undo": {
+        where = [Order.id == args.order_id, Order.refunded_amount + args.amount <= paid + 1e-6]
+        if ctx.customer_id is not None:
+            where.append(Order.customer_id == ctx.customer_id)
+        moved = s.execute(
+            update(Order)
+            .where(*where)
+            .values(refunded_amount=func.round(Order.refunded_amount + args.amount, 2))
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        o = s.get(Order, args.order_id)
+        error = None
+        if moved != 1:
+            if o is None or (ctx.customer_id is not None and o.customer_id != ctx.customer_id):
+                error = f"not_found: order {args.order_id}"
+            else:
+                paid_total, remaining = refundable_remaining(s, o)
+                error = (
+                    f"conflict: refund {args.amount} exceeds refundable {remaining} on order "
+                    f"{o.id} (paid {paid_total}, already refunded {o.refunded_amount})"
+                )
+        else:
+            s.add(
+                Payment(
+                    id=refund_id,
+                    customer_id=o.customer_id,
+                    order_id=o.id,
+                    amount=args.amount,
+                    status="refunded",
+                    method="card",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            data = {
+                "refund_id": refund_id,
                 "order_id": o.id,
-                "restore_refunded_amount": prior,
-                "refund_payment_id": refund_id,
-            },
-        }
+                "amount": args.amount,
+                "reason": args.reason,
+                "order_refunded_total": o.refunded_amount,
+                "_undo": {
+                    "order_id": o.id,
+                    "restore_refunded_amount": round(o.refunded_amount - args.amount, 2),
+                    "refund_payment_id": refund_id,
+                },
+            }
+    # Logged after the order transaction ends: it holds the write lock.
+    if error is not None:
+        _log(ctx, "issue_refund", args.model_dump(), {"error": error}, ok=False, reversible=False)
+        return ToolResult(ok=False, error=error)
     _log(ctx, "issue_refund", args.model_dump(), data, ok=True, reversible=True)
     return ToolResult(ok=True, data=data)
 
@@ -194,7 +212,7 @@ class UpdateAddressArgs(BaseModel):
 def update_shipping_address(ctx: ToolContext, args: UpdateAddressArgs) -> ToolResult:
     with session_scope() as s:
         o = s.get(Order, args.order_id)
-        if o is None:
+        if o is None or (ctx.customer_id is not None and o.customer_id != ctx.customer_id):
             res = {"error": f"not_found: order {args.order_id}"}
             _log(ctx, "update_shipping_address", args.model_dump(), res, ok=False, reversible=False)
             return ToolResult(ok=False, error=res["error"])
@@ -357,17 +375,37 @@ def undo_action(action_id: int) -> ToolResult:
     The action's idempotency key is deleted with it: the action no longer
     stands, so issuing it again on the same ticket must execute, not replay."""
     with session_scope() as s:
+        # Claim the reversal first with a conditional UPDATE, so two concurrent
+        # undos of one action cannot both apply it.
+        claimed = s.execute(
+            update(ActionLog)
+            .where(
+                ActionLog.id == action_id,
+                ActionLog.reversed == False,  # noqa: E712
+                ActionLog.reversible == True,  # noqa: E712
+                ActionLog.tool.in_(_UNDOABLE),  # type: ignore[attr-defined]
+            )
+            .values(reversed=True)
+            .execution_options(synchronize_session=False)
+        ).rowcount
         entry = s.get(ActionLog, action_id)
         if entry is None:
             return ToolResult(ok=False, error=f"not_found: action {action_id}")
-        if entry.reversed:
-            return ToolResult(ok=False, error=f"conflict: action {action_id} is already reversed")
-        if not entry.reversible:
-            return ToolResult(
-                ok=False, error=f"conflict: action {action_id} ({entry.tool}) is irreversible"
-            )
         undo = (entry.result or {}).get("_undo")
+        if claimed != 1:
+            if entry.reversed:
+                return ToolResult(
+                    ok=False, error=f"conflict: action {action_id} is already reversed"
+                )
+            if not entry.reversible:
+                return ToolResult(
+                    ok=False, error=f"conflict: action {action_id} ({entry.tool}) is irreversible"
+                )
+            if not undo:
+                return ToolResult(ok=False, error="no_undo_information")
+            return ToolResult(ok=False, error=f"undo_not_supported: {entry.tool}")
         if not undo:
+            s.rollback()
             return ToolResult(ok=False, error="no_undo_information")
 
         if entry.tool == "issue_refund":
@@ -389,10 +427,7 @@ def undo_action(action_id: int) -> ToolResult:
             if c is not None:
                 for k, v in undo["restore"].items():
                     setattr(c, k, v)
-        else:
-            return ToolResult(ok=False, error=f"undo_not_supported: {entry.tool}")
 
-        entry.reversed = True
         if entry.ticket_id is not None:
             # Lazy import: reliability.idempotency imports the tool registry.
             from agent_ops.reliability.idempotency import idempotency_key

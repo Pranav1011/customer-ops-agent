@@ -1,7 +1,7 @@
 """Ticket and escalation status across re-runs.
 
-One ticket has at most one open escalation, a re-run that resolves the ticket
-closes it, and a run that crashes leaves the ticket marked failed instead of
+One ticket has at most one open escalation, only a human closes it, and a run
+that crashes leaves the ticket marked failed instead of
 sitting 'open' forever.
 """
 
@@ -68,17 +68,17 @@ def test_escalate_tool_reuses_the_open_escalation_for_a_ticket():
     assert len(_escalations("TCK-ESC-TOOL", "open")) == 1
 
 
-def test_rerun_that_resolves_closes_the_open_escalation():
+def test_rerun_that_resolves_leaves_the_human_escalation_open():
+    # Only a human closes an escalation; a later clean run must not hide it.
     body = "Where is my order ORD-000001?"
-    _ticket("TCK-ESC-CLOSE", body)
+    _ticket("TCK-ESC-KEEP", body)
     with session_scope() as s:
-        s.add(Escalation(ticket_id="TCK-ESC-CLOSE", reason="earlier run escalated"))
+        s.add(Escalation(ticket_id="TCK-ESC-KEEP", reason="earlier run escalated"))
 
-    r = run_ticket(body, ticket_id="TCK-ESC-CLOSE", customer_id="CUST-00001")
+    r = run_ticket(body, ticket_id="TCK-ESC-KEEP", customer_id="CUST-00001")
 
     assert r["status"] == "resolved"
-    assert _escalations("TCK-ESC-CLOSE", "open") == []
-    assert [e.status for e in _escalations("TCK-ESC-CLOSE")] == ["resolved"]
+    assert [e.status for e in _escalations("TCK-ESC-KEEP")] == ["open"]
 
 
 def test_sync_resolve_that_crashes_marks_the_ticket_failed(monkeypatch):

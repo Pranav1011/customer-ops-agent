@@ -50,6 +50,8 @@ class Settings(BaseSettings):
 
     # --- Durable queue ---
     # "thread" = in-process pool (default, zero setup, used by CI/cold clone);
+    #            single API process only: startup reconcile treats every
+    #            unfinished job as orphaned, so run more processes on "redis";
     # "redis"  = RQ workers on Redis (retries, timeouts, dead-letter, restart-safe).
     queue_backend: str = Field(default="thread")  # "thread" | "redis"
     redis_url: str = Field(default="redis://localhost:6379/0")

@@ -19,6 +19,11 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if get_settings().queue_backend != "redis":
+        log.warning(
+            "QUEUE_BACKEND=thread is single-process only: startup reconcile re-runs every "
+            "unfinished job, so run one API process or use QUEUE_BACKEND=redis"
+        )
     # Crash recovery: re-dispatch jobs a dead worker or process left unfinished.
     # A queue outage must not keep the API down, so a failure here is logged.
     try:

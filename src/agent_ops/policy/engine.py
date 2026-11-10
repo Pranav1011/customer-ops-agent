@@ -142,7 +142,7 @@ def _check_scope(
         if authorized_customer and o["customer_id"] != authorized_customer:
             return _block(
                 "cross_customer",
-                f"order {order_id} belongs to {o['customer_id']}, not {authorized_customer}",
+                f"order {order_id} does not belong to customer {authorized_customer}",
             )
     return None
 

@@ -7,8 +7,10 @@ dropped. Idempotency makes the re-run safe: an action that already completed is
 replayed, not re-issued.
 
 On the thread backend every unfinished row at startup is an orphan: the pool
-that held it died with the previous process. On the Redis backend a row can be
-unfinished because RQ still holds the job, so reconcile asks RQ first: a job RQ
+that held it died with the previous process. That holds only for a single API
+process; with several, one process's startup would re-run another's live jobs.
+
+On the Redis backend a row can be unfinished because RQ still holds the job, so reconcile asks RQ first: a job RQ
 will still deliver is left alone, a job RQ dead-lettered is marked failed, and
 only a job RQ has lost is re-dispatched.
 

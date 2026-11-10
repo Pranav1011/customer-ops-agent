@@ -19,10 +19,11 @@ from functools import lru_cache
 from typing import Any
 
 from sqlalchemy import update
+from sqlmodel import select
 
 from agent_ops.agent.graph import run_ticket
 from agent_ops.backend.db import session_scope
-from agent_ops.backend.models import Job, Ticket, TraceRecord
+from agent_ops.backend.models import ActionLog, Job, Ticket, TraceRecord
 from agent_ops.backend.transitions import (
     JOB_TERMINAL,
     JOB_TRANSITIONS,
@@ -134,16 +135,36 @@ def mark_ticket_failed(ticket_id: str | None, started_at: datetime | None = None
         t.resolution_status = "failed"
 
 
+def _writes_since(ticket_id: str | None, since: datetime | None) -> list[str]:
+    """Tools whose writes on this ticket succeeded since `since` (this attempt)."""
+    if not ticket_id or since is None:
+        return []
+    with session_scope() as s:
+        rows = s.exec(
+            select(ActionLog).where(ActionLog.ticket_id == ticket_id, ActionLog.ok == True)  # noqa: E712
+        ).all()
+        return sorted({r.tool for r in rows if _as_utc(r.created_at) >= since})
+
+
 def _record_failure(
     job_id: str, ticket_id: str | None, error: str, rq_job: Any, started_at: datetime | None
-) -> None:
+) -> bool:
     """Mark the job failed, or back to queued while RQ still has a retry for it
-    (a sync RQ queue never retries)."""
+    (a sync RQ queue never retries). Returns False when the failure must not
+    reach RQ's retry: a retry re-runs the whole ticket, and once a write has
+    landed a re-run (possibly choosing a different amount) could act twice."""
     if rq_job is not None and rq_job.should_retry and rq_job.worker_name != "sync":
-        _transition(job_id, "queued", error=error)
-        return
+        applied = _writes_since(ticket_id, started_at)
+        if not applied:
+            _transition(job_id, "queued", error=error)
+            return True
+        error = f"not retried: writes already applied: {', '.join(applied)} ({error})"
+        _transition(job_id, "failed", error=error)
+        mark_ticket_failed(ticket_id, started_at)
+        return False
     _transition(job_id, "failed", error=error)
     mark_ticket_failed(ticket_id, started_at)
+    return True
 
 
 def mark_dead_lettered(job_id: str, ticket_id: str | None) -> None:
@@ -163,9 +184,11 @@ def on_rq_failure(rq_job: Any, connection: Any, exc_type: Any, exc: Any, tb: Any
             job = s.get(Job, rq_job.id)
             if job is None or job.status != "running":
                 return
-            ticket_id = job.ticket_id
+            ticket_id, claimed_at = job.ticket_id, _as_utc(job.updated_at)
         error = f"{getattr(exc_type, '__name__', 'Error')}: worker lost mid-run"
-        _record_failure(rq_job.id, ticket_id, error, rq_job, None)
+        # If writes landed, the job is closed failed; RQ's retry then finds it
+        # terminal and skips it.
+        _record_failure(rq_job.id, ticket_id, error, rq_job, claimed_at)
     except Exception:
         log.exception("could not record RQ failure for job %s", getattr(rq_job, "id", "?"))
 
@@ -189,8 +212,10 @@ def process_job(
         r = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id, order_id=order_id)
     except Exception as e:  # a job failure must not take down the pool
         rq_job = _rq_job()
-        _record_failure(job_id, ticket_id, f"{type(e).__name__}: {e}", rq_job, started_at)
-        if rq_job is not None:
+        retryable = _record_failure(
+            job_id, ticket_id, f"{type(e).__name__}: {e}", rq_job, started_at
+        )
+        if rq_job is not None and retryable:
             raise
         return
     result = {
