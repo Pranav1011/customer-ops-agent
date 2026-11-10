@@ -59,12 +59,16 @@ def submit_ticket(payload: SubmitTicket) -> TicketResult:
             )
         )
 
-    result = run_ticket(
-        payload.body,
-        ticket_id=ticket_id,
-        customer_id=payload.customer_id,
-        order_id=payload.order_id,
-    )
+    try:
+        result = run_ticket(
+            payload.body,
+            ticket_id=ticket_id,
+            customer_id=payload.customer_id,
+            order_id=payload.order_id,
+        )
+    except Exception:
+        worker.mark_ticket_failed(ticket_id)
+        raise
     return TicketResult(
         ticket_id=ticket_id,
         run_id=result["run_id"],
@@ -173,7 +177,11 @@ def resolve_ticket(ticket_id: str) -> TicketResult:
             raise HTTPException(404, f"ticket not found: {ticket_id}")
         body, customer_id = t.body, t.customer_id
 
-    result = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id)
+    try:
+        result = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id)
+    except Exception:
+        worker.mark_ticket_failed(ticket_id)
+        raise
     return TicketResult(
         ticket_id=ticket_id,
         run_id=result["run_id"],

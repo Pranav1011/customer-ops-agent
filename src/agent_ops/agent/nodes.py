@@ -20,7 +20,8 @@ from agent_ops.agent.schemas import (
 )
 from agent_ops.agent.state import AgentState
 from agent_ops.backend.db import session_scope
-from agent_ops.backend.models import Escalation, Ticket
+from agent_ops.backend.escalations import open_escalation, resolve_open_escalations
+from agent_ops.backend.models import Ticket
 from agent_ops.config import get_settings
 from agent_ops.llm.base import LLMProvider
 from agent_ops.memory.long_term import recall, record_resolution
@@ -473,13 +474,13 @@ def _persist(state: AgentState, status: str, reply: str) -> None:
                 t.resolution_status = status
                 t.run_id = state["run_id"]
         if state.get("escalated"):
-            s.add(
-                Escalation(
-                    ticket_id=state.get("ticket_id"),
-                    customer_id=state.get("customer_id"),
-                    run_id=state["run_id"],
-                    reason=state.get("escalation_reason") or "escalated",
-                    context={"intent": state.get("intent"), "request": state.get("request_text")},
-                    status="open",
-                )
+            open_escalation(
+                s,
+                ticket_id=state.get("ticket_id"),
+                customer_id=state.get("customer_id"),
+                run_id=state["run_id"],
+                reason=state.get("escalation_reason") or "escalated",
+                context={"intent": state.get("intent"), "request": state.get("request_text")},
             )
+        elif state.get("ticket_id"):
+            resolve_open_escalations(s, state["ticket_id"])

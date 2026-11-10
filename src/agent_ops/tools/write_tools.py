@@ -16,11 +16,11 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from agent_ops.backend.db import session_scope
+from agent_ops.backend.escalations import open_escalation
 from agent_ops.backend.ledger import refundable_remaining
 from agent_ops.backend.models import (
     ActionLog,
     Customer,
-    Escalation,
     IdempotencyKey,
     Order,
     Payment,
@@ -334,16 +334,14 @@ class EscalateArgs(BaseModel):
 )
 def escalate_to_human(ctx: ToolContext, args: EscalateArgs) -> ToolResult:
     with session_scope() as s:
-        esc = Escalation(
+        esc = open_escalation(
+            s,
             ticket_id=args.ticket_id or ctx.ticket_id,
             customer_id=ctx.customer_id,
             run_id=ctx.run_id,
             reason=args.reason,
             context=args.context,
-            status="open",
         )
-        s.add(esc)
-        s.flush()
         data = {"escalation_id": esc.id, "reason": args.reason}
     _log(ctx, "escalate_to_human", {"reason": args.reason}, data, ok=True, reversible=False)
     return ToolResult(ok=True, data=data)
