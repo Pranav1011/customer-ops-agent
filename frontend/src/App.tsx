@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Escalations } from "./components/Escalations";
 import { TicketComposer } from "./components/TicketComposer";
@@ -7,6 +7,8 @@ import type { Escalation, QueueTicket } from "./types";
 import { StatusChip } from "./ui";
 
 type Tab = "queue" | "escalations";
+
+const RECONNECT_MS = 3000;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("queue");
@@ -28,17 +30,33 @@ export default function App() {
     setEscalations(e.escalations);
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const h = await api.health();
-        setProvider(h.llm_provider);
-        await Promise.all([refreshQueue(), refreshEscalations()]);
-      } catch {
-        setOffline(true);
-      }
-    })();
+  // Connect to the API. Any successful round trip clears `offline`, so the
+  // console recovers on its own once the backend comes up.
+  const connecting = useRef(false);
+  const connect = useCallback(async () => {
+    if (connecting.current) return;
+    connecting.current = true;
+    try {
+      const h = await api.health();
+      setProvider(h.llm_provider);
+      await Promise.all([refreshQueue(), refreshEscalations()]);
+      setOffline(false);
+    } catch {
+      setOffline(true);
+    } finally {
+      connecting.current = false;
+    }
   }, [refreshQueue, refreshEscalations]);
+
+  useEffect(() => {
+    connect();
+  }, [connect]);
+
+  useEffect(() => {
+    if (!offline) return;
+    const t = setInterval(connect, RECONNECT_MS);
+    return () => clearInterval(t);
+  }, [offline, connect]);
 
   const selected = tickets.find((t) => t.ticket_id === selectedId) ?? null;
 
@@ -54,8 +72,11 @@ export default function App() {
             <h3>API not reachable</h3>
             <p>
               Start the backend with <code style={{ fontFamily: "var(--font-mono)" }}>make dev</code> (it serves{" "}
-              {api.base}), then reload.
+              {api.base}). The console reconnects on its own every few seconds.
             </p>
+            <button className="btn" onClick={connect}>
+              Retry now
+            </button>
           </div>
         </div>
       </div>
@@ -117,6 +138,7 @@ export default function App() {
             <div className="col detail">
               {selected ? (
                 <TraceViewer
+                  key={selected.ticket_id}
                   ticket={selected}
                   onChanged={() => {
                     refreshQueue();
