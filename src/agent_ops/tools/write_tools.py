@@ -13,16 +13,20 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlmodel import select
 
 from agent_ops.backend.db import session_scope
+from agent_ops.backend.ledger import refundable_remaining
 from agent_ops.backend.models import (
     ActionLog,
     Customer,
     Escalation,
+    IdempotencyKey,
     Order,
     Payment,
     Subscription,
 )
+from agent_ops.backend.transitions import SUBSCRIPTION_TRANSITIONS, transition_error
 from agent_ops.tools.registry import ToolContext, ToolResult, register
 
 _CRM_ALLOWED_FIELDS = {"prefers_channel", "notes", "tier"}
@@ -75,9 +79,14 @@ def issue_refund(ctx: ToolContext, args: IssueRefundArgs) -> ToolResult:
             res = {"error": f"not_found: order {args.order_id}"}
             _log(ctx, "issue_refund", args.model_dump(), res, ok=False, reversible=False)
             return ToolResult(ok=False, error=res["error"])
-        remaining = round(o.total - o.refunded_amount, 2)
+        paid, remaining = refundable_remaining(s, o)
         if args.amount > remaining + 1e-6:
-            res = {"error": f"conflict: refund {args.amount} exceeds refundable {remaining}"}
+            res = {
+                "error": (
+                    f"conflict: refund {args.amount} exceeds refundable {remaining} on order "
+                    f"{o.id} (paid {paid}, already refunded {o.refunded_amount})"
+                )
+            }
             _log(ctx, "issue_refund", args.model_dump(), res, ok=False, reversible=False)
             return ToolResult(ok=False, error=res["error"])
 
@@ -130,11 +139,23 @@ class CancelSubscriptionArgs(BaseModel):
 )
 def cancel_subscription(ctx: ToolContext, args: CancelSubscriptionArgs) -> ToolResult:
     with session_scope() as s:
-        sub = s.query(Subscription).filter(Subscription.customer_id == args.customer_id).first()
+        subs = s.exec(
+            select(Subscription).where(Subscription.customer_id == args.customer_id)
+        ).all()
+        # Act on a live subscription when there is one; an old cancelled one only
+        # answers when nothing else is left to cancel.
+        sub = next((x for x in subs if x.status != "cancelled"), subs[0] if subs else None)
         if sub is None:
             res = {"error": f"not_found: subscription for {args.customer_id}"}
             _log(ctx, "cancel_subscription", args.model_dump(), res, ok=False, reversible=False)
             return ToolResult(ok=False, error=res["error"])
+        err = transition_error(
+            SUBSCRIPTION_TRANSITIONS, "subscription", sub.id, sub.status, "cancelled"
+        )
+        if err is not None:
+            res = {"error": err}
+            _log(ctx, "cancel_subscription", args.model_dump(), res, ok=False, reversible=False)
+            return ToolResult(ok=False, error=err)
         prior_status = sub.status
         sub.status = "cancelled"
         sub.cancelled_effective = datetime.now(UTC)
@@ -142,9 +163,9 @@ def cancel_subscription(ctx: ToolContext, args: CancelSubscriptionArgs) -> ToolR
             "subscription_id": sub.id,
             "customer_id": args.customer_id,
             "status": "cancelled",
-            "_undo": {"subscription_id": sub.id, "restore_status": prior_status},
+            "previous_status": prior_status,
         }
-    _log(ctx, "cancel_subscription", args.model_dump(), data, ok=True, reversible=True)
+    _log(ctx, "cancel_subscription", args.model_dump(), data, ok=True, reversible=False)
     return ToolResult(ok=True, data=data)
 
 
@@ -333,13 +354,20 @@ def escalate_to_human(ctx: ToolContext, args: EscalateArgs) -> ToolResult:
 # --------------------------------------------------------------------------- #
 def undo_action(action_id: int) -> ToolResult:
     """Reverse a previously logged, reversible action. Demonstrates that every
-    write in the mock can be rolled back."""
+    reversible write in the mock can be rolled back.
+
+    The action's idempotency key is deleted with it: the action no longer
+    stands, so issuing it again on the same ticket must execute, not replay."""
     with session_scope() as s:
         entry = s.get(ActionLog, action_id)
         if entry is None:
             return ToolResult(ok=False, error=f"not_found: action {action_id}")
-        if not entry.reversible or entry.reversed:
-            return ToolResult(ok=False, error="not_reversible_or_already_reversed")
+        if entry.reversed:
+            return ToolResult(ok=False, error=f"conflict: action {action_id} is already reversed")
+        if not entry.reversible:
+            return ToolResult(
+                ok=False, error=f"conflict: action {action_id} ({entry.tool}) is irreversible"
+            )
         undo = (entry.result or {}).get("_undo")
         if not undo:
             return ToolResult(ok=False, error="no_undo_information")
@@ -347,7 +375,10 @@ def undo_action(action_id: int) -> ToolResult:
         if entry.tool == "issue_refund":
             o = s.get(Order, undo["order_id"])
             if o is not None:
-                o.refunded_amount = undo["restore_refunded_amount"]
+                # Subtract this refund rather than restore the snapshot, so undoing
+                # an earlier refund keeps any refund issued after it.
+                amount = float((entry.args or {})["amount"])
+                o.refunded_amount = round(max(o.refunded_amount - amount, 0.0), 2)
             pay = s.get(Payment, undo["refund_payment_id"])
             if pay is not None:
                 s.delete(pay)
@@ -355,11 +386,6 @@ def undo_action(action_id: int) -> ToolResult:
             o = s.get(Order, undo["order_id"])
             if o is not None:
                 o.shipping_address = undo["restore_address"]
-        elif entry.tool == "cancel_subscription":
-            sub = s.get(Subscription, undo["subscription_id"])
-            if sub is not None:
-                sub.status = undo["restore_status"]
-                sub.cancelled_effective = None
         elif entry.tool == "update_crm_record":
             c = s.get(Customer, undo["customer_id"])
             if c is not None:
@@ -369,4 +395,12 @@ def undo_action(action_id: int) -> ToolResult:
             return ToolResult(ok=False, error=f"undo_not_supported: {entry.tool}")
 
         entry.reversed = True
+        if entry.ticket_id is not None:
+            # Lazy import: reliability.idempotency imports the tool registry.
+            from agent_ops.reliability.idempotency import idempotency_key
+
+            key = idempotency_key(entry.ticket_id, entry.tool, dict(entry.args or {}))
+            stale = s.get(IdempotencyKey, key)
+            if stale is not None:
+                s.delete(stale)
         return ToolResult(ok=True, data={"reversed_action": action_id, "tool": entry.tool})

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_ops.backend.db import session_scope
+from agent_ops.backend.ledger import refundable_remaining
 from agent_ops.backend.models import Order
 from agent_ops.config import get_settings
 
@@ -110,10 +111,13 @@ def _order(order_id: str) -> dict[str, Any] | None:
         o = s.get(Order, order_id)
         if o is None:
             return None
+        paid, refundable = refundable_remaining(s, o)
         return {
             "customer_id": o.customer_id,
             "total": o.total,
+            "paid": paid,
             "refunded_amount": o.refunded_amount,
+            "refundable": refundable,
             "status": o.status,
         }
 
@@ -153,11 +157,12 @@ def _refund_policy(args: dict[str, Any]) -> PolicyDecision:
 
     o = _order(order_id) if order_id else None
     if o is not None:
-        remaining = round(o["total"] - o["refunded_amount"], 2)
+        remaining = o["refundable"]
         if amount > remaining + 1e-6:
             return _block(
                 "refund_exceeds_order",
-                f"refund {amount} exceeds refundable remaining {remaining} on order {order_id}",
+                f"refund {amount} exceeds refundable remaining {remaining} on order {order_id} "
+                f"(paid {o['paid']}, already refunded {o['refunded_amount']})",
             )
 
     if amount > settings.refund_approval_threshold:
