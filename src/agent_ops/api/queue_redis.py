@@ -55,3 +55,32 @@ def enqueue_redis(
         job_timeout=JOB_TIMEOUT,
         result_ttl=86_400,
     )
+
+
+def delivery_state(job_id: str) -> str:
+    """How RQ currently holds one of our jobs, for startup reconcile:
+
+    * "pending": RQ will still deliver it (queued, scheduled, deferred, or
+      started by a worker that is alive). Re-dispatching would run it twice.
+    * "dead": RQ gave up on it (failed, stopped, canceled).
+    * "lost": RQ has no live record (missing, finished, or started by a worker
+      that is gone), so only a re-dispatch will run it.
+    """
+    from rq import Worker
+    from rq.exceptions import NoSuchJobError
+    from rq.job import Job as RQJob
+    from rq.job import JobStatus
+
+    try:
+        job = RQJob.fetch(job_id, connection=get_redis())
+    except NoSuchJobError:
+        return "lost"
+    status = job.get_status(refresh=False)
+    if status in (JobStatus.QUEUED, JobStatus.SCHEDULED, JobStatus.DEFERRED):
+        return "pending"
+    if status == JobStatus.STARTED:
+        held = {w.get_current_job_id() for w in Worker.all(connection=get_redis())}
+        return "pending" if job_id in held else "lost"
+    if status in (JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELED):
+        return "dead"
+    return "lost"

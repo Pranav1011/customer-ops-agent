@@ -17,9 +17,17 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
+from sqlalchemy import update
+
 from agent_ops.agent.graph import run_ticket
 from agent_ops.backend.db import session_scope
-from agent_ops.backend.models import Job
+from agent_ops.backend.models import Job, Ticket
+from agent_ops.backend.transitions import (
+    JOB_TERMINAL,
+    JOB_TRANSITIONS,
+    IllegalTransition,
+    check_transition,
+)
 from agent_ops.config import get_settings
 
 
@@ -34,14 +42,84 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _set_status(job_id: str, **fields: Any) -> None:
+def _transition(job_id: str, target: str, **fields: Any) -> None:
+    """Move a job to `target`, refusing moves JOB_TRANSITIONS does not allow.
+
+    The write is a compare-and-set on the status read, so two deliveries racing
+    on one job cannot both win the same move."""
     with session_scope() as s:
         job = s.get(Job, job_id)
         if job is None:
             return
-        for k, v in fields.items():
-            setattr(job, k, v)
-        job.updated_at = _now()
+        current = job.status
+        check_transition(JOB_TRANSITIONS, "job", job_id, current, target)
+        moved = s.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == current)  # type: ignore[arg-type]
+            .values(status=target, updated_at=_now(), **fields)
+        ).rowcount
+        if moved != 1:
+            raise IllegalTransition(
+                f"conflict: job {job_id} left {current} before it could move to {target}"
+            )
+
+
+def _rq_job() -> Any:
+    """The RQ job this call is running under, or None on the thread backend."""
+    if get_settings().queue_backend != "redis":
+        return None
+    from rq import get_current_job
+
+    return get_current_job()
+
+
+def _claim(job_id: str) -> bool:
+    """Move a delivered job to running. False means this delivery must not run it.
+
+    A job already succeeded or failed is a duplicate delivery and is skipped. A
+    job already running is only resumed when RQ re-delivers it (its previous
+    worker died mid-run); on the thread backend it means a second dispatch."""
+    with session_scope() as s:
+        job = s.get(Job, job_id)
+        status = job.status if job is not None else None
+    if status is None:
+        return True
+    if status in JOB_TERMINAL:
+        return False
+    if status == "running":
+        return _rq_job() is not None
+    try:
+        _transition(job_id, "running")
+    except IllegalTransition:
+        return False  # another delivery claimed it first
+    return True
+
+
+def mark_ticket_failed(ticket_id: str | None) -> None:
+    """Record that the latest run of a ticket failed, so it doesn't sit 'open'."""
+    if not ticket_id:
+        return
+    with session_scope() as s:
+        t = s.get(Ticket, ticket_id)
+        if t is not None:
+            t.resolution_status = "failed"
+
+
+def _record_failure(job_id: str, ticket_id: str, error: str, rq_job: Any) -> None:
+    """Mark the job failed, or back to queued while RQ still has a retry for it
+    (a sync RQ queue never retries)."""
+    if rq_job is not None and rq_job.should_retry and rq_job.worker_name != "sync":
+        _transition(job_id, "queued", error=error)
+        return
+    _transition(job_id, "failed", error=error)
+    mark_ticket_failed(ticket_id)
+
+
+def mark_dead_lettered(job_id: str, ticket_id: str | None) -> None:
+    """RQ gave up on this job without our worker recording it (e.g. its last
+    worker was killed): close it as failed instead of leaving it unfinished."""
+    _transition(job_id, "failed", error="dead-lettered by the queue")
+    mark_ticket_failed(ticket_id)
 
 
 def process_job(
@@ -51,23 +129,32 @@ def process_job(
 
     Module-level and importable by name so an out-of-process RQ worker can run it
     (`agent_ops.api.worker.process_job`); the in-process ThreadPool backend calls
-    it directly. Idempotency makes a re-run after a crash safe."""
-    _set_status(job_id, status="running")
+    it directly. Idempotency makes a re-run after a crash safe.
+
+    On failure the job is recorded and, under RQ, the exception is re-raised so
+    RQ's retry and dead-letter handling see it. The thread pool has no retry, so
+    there the failure ends with the recorded status."""
+    if not _claim(job_id):
+        return
     try:
         r = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id, order_id=order_id)
-        result = {
-            "ticket_id": ticket_id,
-            "run_id": r["run_id"],
-            "intent": r["intent"],
-            "status": r["status"],
-            "escalated": r["escalated"],
-            "customer_reply": r["customer_reply"],
-            "escalation_reason": r["escalation_reason"],
-            "summary": r["summary"],
-        }
-        _set_status(job_id, status="succeeded", run_id=r["run_id"], result=result)
     except Exception as e:  # a job failure must not take down the pool
-        _set_status(job_id, status="failed", error=f"{type(e).__name__}: {e}")
+        rq_job = _rq_job()
+        _record_failure(job_id, ticket_id, f"{type(e).__name__}: {e}", rq_job)
+        if rq_job is not None:
+            raise
+        return
+    result = {
+        "ticket_id": ticket_id,
+        "run_id": r["run_id"],
+        "intent": r["intent"],
+        "status": r["status"],
+        "escalated": r["escalated"],
+        "customer_reply": r["customer_reply"],
+        "escalation_reason": r["escalation_reason"],
+        "summary": r["summary"],
+    }
+    _transition(job_id, "succeeded", run_id=r["run_id"], result=result, error=None)
 
 
 def enqueue(
@@ -98,7 +185,11 @@ def _dispatch(
 def requeue(job_id: str, payload: dict[str, Any], ticket_id: str | None) -> None:
     """Re-dispatch an existing crash-orphaned job under its own id, from the
     payload persisted at enqueue time. Idempotency keeps the re-run safe."""
-    _set_status(job_id, status="queued")
+    with session_scope() as s:
+        job = s.get(Job, job_id)
+        status = job.status if job is not None else None
+    if status is not None and status != "queued":
+        _transition(job_id, "queued")
     _dispatch(
         job_id,
         str(payload.get("body", "")),

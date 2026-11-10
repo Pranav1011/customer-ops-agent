@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,11 +11,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from agent_ops.api.routes import router
 from agent_ops.backend.db import init_db
 from agent_ops.config import get_settings
+from agent_ops.reliability.reconcile import reconcile_orphans
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Crash recovery: re-dispatch jobs a dead worker or process left unfinished.
+    # A queue outage must not keep the API down, so a failure here is logged.
+    try:
+        requeued = reconcile_orphans()
+        if requeued:
+            log.info("startup reconcile re-queued %d orphaned job(s): %s", len(requeued), requeued)
+    except Exception:
+        log.exception("startup reconcile failed; unfinished jobs were left as they are")
     yield
 
 
