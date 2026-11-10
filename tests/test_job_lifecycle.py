@@ -154,3 +154,108 @@ def test_reconcile_marks_dead_lettered_jobs_failed(monkeypatch):
     assert worker.get_job("JOB-RQ-DEAD")["status"] == "failed"
     with session_scope() as s:
         assert s.get(Ticket, "TCK-RQ-DEAD").resolution_status == "failed"
+
+
+def _rq_process_job_on(conn, q, job_id: str, ticket_id: str) -> None:
+    from rq import SimpleWorker
+
+    q.enqueue(
+        "agent_ops.api.worker.process_job",
+        job_id,
+        _PAYLOAD["body"],
+        ticket_id,
+        None,
+        None,
+        job_id=job_id,
+    )
+    SimpleWorker([q], connection=conn).work(burst=True)
+
+
+def test_rq_redelivery_does_not_race_a_live_execution(monkeypatch):
+    conn, q = _sync_redis(monkeypatch, is_async=True)
+    calls = []
+    monkeypatch.setattr(worker, "run_ticket", lambda *a, **k: calls.append(a))
+    _add_job("JOB-LIVE-DUP", "running", "TCK-LIVE-DUP")  # another worker is on it right now
+
+    _rq_process_job_on(conn, q, "JOB-LIVE-DUP", "TCK-LIVE-DUP")
+
+    assert calls == []
+    assert worker.get_job("JOB-LIVE-DUP")["status"] == "running"
+
+
+def test_rq_redelivery_resumes_an_execution_older_than_the_job_timeout(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from agent_ops.api.queue_redis import JOB_TIMEOUT
+
+    conn, q = _sync_redis(monkeypatch, is_async=True)
+    stale = datetime.now(UTC) - timedelta(seconds=JOB_TIMEOUT + 30)
+    _add_job("JOB-ABANDONED", "running", "TCK-ABANDONED", updated_at=stale)
+
+    _rq_process_job_on(conn, q, "JOB-ABANDONED", "TCK-ABANDONED")
+
+    assert worker.get_job("JOB-ABANDONED")["status"] == "succeeded"
+
+
+class _FakeRQJob:
+    def __init__(self, job_id: str, *, should_retry: bool):
+        self.id = job_id
+        self.should_retry = should_retry
+        self.worker_name = "worker-1"
+
+
+def test_rq_failure_callback_closes_a_job_whose_worker_was_killed():
+    _add_ticket("TCK-KILLED")
+    _add_job("JOB-KILLED", "running", "TCK-KILLED")
+
+    worker.on_rq_failure(
+        _FakeRQJob("JOB-KILLED", should_retry=False), None, RuntimeError, None, None
+    )
+
+    assert worker.get_job("JOB-KILLED")["status"] == "failed"
+    with session_scope() as s:
+        assert s.get(Ticket, "TCK-KILLED").resolution_status == "failed"
+
+
+def test_rq_failure_callback_requeues_when_rq_will_retry():
+    _add_job("JOB-KILLED-RETRY", "running", "TCK-KILLED-RETRY")
+
+    worker.on_rq_failure(
+        _FakeRQJob("JOB-KILLED-RETRY", should_retry=True), None, RuntimeError, None, None
+    )
+
+    assert worker.get_job("JOB-KILLED-RETRY")["status"] == "queued"
+
+
+def test_rq_failure_callback_leaves_failures_process_job_recorded():
+    _add_job("JOB-RECORDED", "failed", "TCK-RECORDED", error="RuntimeError: original")
+
+    worker.on_rq_failure(
+        _FakeRQJob("JOB-RECORDED", should_retry=False), None, RuntimeError, None, None
+    )
+
+    assert worker.get_job("JOB-RECORDED")["error"] == "RuntimeError: original"
+
+
+def test_a_stale_failure_does_not_overwrite_a_newer_successful_run():
+    from datetime import UTC, datetime, timedelta
+
+    from agent_ops.backend.models import TraceRecord
+
+    started = datetime.now(UTC) - timedelta(minutes=1)
+    with session_scope() as s:
+        s.add(TraceRecord(run_id="run-newer", ticket_id="TCK-STALE-FAIL", status="resolved"))
+        s.add(
+            Ticket(
+                id="TCK-STALE-FAIL",
+                body="x",
+                status="resolved",
+                resolution_status="resolved",
+                run_id="run-newer",
+            )
+        )
+
+    worker.mark_ticket_failed("TCK-STALE-FAIL", started)
+
+    with session_scope() as s:
+        assert s.get(Ticket, "TCK-STALE-FAIL").resolution_status == "resolved"

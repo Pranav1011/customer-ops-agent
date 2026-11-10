@@ -24,7 +24,9 @@ async def lifespan(app: FastAPI):
     try:
         requeued = reconcile_orphans()
         if requeued:
-            log.info("startup reconcile re-queued %d orphaned job(s): %s", len(requeued), requeued)
+            log.warning(
+                "startup reconcile re-queued %d orphaned job(s): %s", len(requeued), requeued
+            )
     except Exception:
         log.exception("startup reconcile failed; unfinished jobs were left as they are")
     yield

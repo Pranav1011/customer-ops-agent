@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,7 @@ def submit_ticket(payload: SubmitTicket) -> TicketResult:
             )
         )
 
+    started_at = datetime.now(UTC)
     try:
         result = run_ticket(
             payload.body,
@@ -67,7 +69,7 @@ def submit_ticket(payload: SubmitTicket) -> TicketResult:
             order_id=payload.order_id,
         )
     except Exception:
-        worker.mark_ticket_failed(ticket_id)
+        worker.mark_ticket_failed(ticket_id, started_at)
         raise
     return TicketResult(
         ticket_id=ticket_id,
@@ -177,10 +179,11 @@ def resolve_ticket(ticket_id: str) -> TicketResult:
             raise HTTPException(404, f"ticket not found: {ticket_id}")
         body, customer_id = t.body, t.customer_id
 
+    started_at = datetime.now(UTC)
     try:
         result = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id)
     except Exception:
-        worker.mark_ticket_failed(ticket_id)
+        worker.mark_ticket_failed(ticket_id, started_at)
         raise
     return TicketResult(
         ticket_id=ticket_id,

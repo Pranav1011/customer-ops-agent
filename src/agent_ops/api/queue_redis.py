@@ -41,7 +41,7 @@ def enqueue_redis(
     customer_id: str | None,
     order_id: str | None,
 ) -> None:
-    from rq import Retry
+    from rq import Callback, Retry
 
     get_queue().enqueue(
         "agent_ops.api.worker.process_job",
@@ -54,19 +54,32 @@ def enqueue_redis(
         retry=Retry(max=2, interval=[5, 15]),
         job_timeout=JOB_TIMEOUT,
         result_ttl=86_400,
+        # Records a failure RQ detects without process_job (a killed worker).
+        on_failure=Callback("agent_ops.api.worker.on_rq_failure"),
     )
 
 
-def delivery_state(job_id: str) -> str:
-    """How RQ currently holds one of our jobs, for startup reconcile:
+def held_job_ids() -> set[str]:
+    """Ids of the jobs registered RQ workers report as currently running."""
+    from rq import Worker
+
+    return {
+        job_id
+        for w in Worker.all(connection=get_redis())
+        if (job_id := w.get_current_job_id()) is not None
+    }
+
+
+def delivery_state(job_id: str, held: set[str]) -> str:
+    """How RQ currently holds one of our jobs, for startup reconcile. `held` is
+    `held_job_ids()`, computed once per reconcile.
 
     * "pending": RQ will still deliver it (queued, scheduled, deferred, or
-      started by a worker that is alive). Re-dispatching would run it twice.
+      started by a registered worker). Re-dispatching would run it twice.
     * "dead": RQ gave up on it (failed, stopped, canceled).
     * "lost": RQ has no live record (missing, finished, or started by a worker
       that is gone), so only a re-dispatch will run it.
     """
-    from rq import Worker
     from rq.exceptions import NoSuchJobError
     from rq.job import Job as RQJob
     from rq.job import JobStatus
@@ -79,7 +92,6 @@ def delivery_state(job_id: str) -> str:
     if status in (JobStatus.QUEUED, JobStatus.SCHEDULED, JobStatus.DEFERRED):
         return "pending"
     if status == JobStatus.STARTED:
-        held = {w.get_current_job_id() for w in Worker.all(connection=get_redis())}
         return "pending" if job_id in held else "lost"
     if status in (JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELED):
         return "dead"

@@ -18,10 +18,13 @@ FailedJobRegistry) so they can be inspected instead of vanishing.
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from sqlmodel import select
 
 from agent_ops.backend.db import session_scope
 from agent_ops.backend.models import Job
+from agent_ops.backend.transitions import IllegalTransition
 
 _UNFINISHED = ("queued", "running")
 
@@ -37,20 +40,23 @@ def reconcile_orphans() -> list[str]:
             (j.id, dict(j.payload or {}), j.ticket_id)
             for j in s.exec(select(Job).where(Job.status.in_(_UNFINISHED))).all()  # type: ignore[attr-defined]
         ]
-    on_redis = get_settings().queue_backend == "redis"
+    held: set[str] | None = None
+    if rows and get_settings().queue_backend == "redis":
+        from agent_ops.api.queue_redis import delivery_state, held_job_ids
+
+        held = held_job_ids()
     requeued = []
     for job_id, payload, ticket_id in rows:
-        if on_redis:
-            from agent_ops.api.queue_redis import delivery_state
-
-            state = delivery_state(job_id)
+        if held is not None:
+            state = delivery_state(job_id, held)
             if state == "pending":
                 continue
             if state == "dead":
-                worker.mark_dead_lettered(job_id, ticket_id)
+                with suppress(IllegalTransition):  # a concurrent reconcile closed it
+                    worker.mark_dead_lettered(job_id, ticket_id)
                 continue
-        worker.requeue(job_id, payload, ticket_id)
-        requeued.append(job_id)
+        if worker.requeue(job_id, payload, ticket_id):
+            requeued.append(job_id)
     return requeued
 
 

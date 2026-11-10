@@ -93,3 +93,18 @@ def test_sync_resolve_that_crashes_marks_the_ticket_failed(monkeypatch):
 
     with session_scope() as s:
         assert s.get(Ticket, "TCK-SYNC-FAIL").resolution_status == "failed"
+
+
+def test_escalate_tool_never_rewrites_another_customers_escalation():
+    with session_scope() as s:
+        s.add(
+            Escalation(
+                ticket_id="TCK-ESC-OWNER", customer_id="CUST-00002", reason="original reason"
+            )
+        )
+    ctx = ToolContext(run_id="esc-foreign", ticket_id="TCK-OTHER", customer_id="CUST-00001")
+
+    REGISTRY.run("escalate_to_human", {"ticket_id": "TCK-ESC-OWNER", "reason": "hijack"}, ctx)
+
+    rows = {e.customer_id: e.reason for e in _escalations("TCK-ESC-OWNER", "open")}
+    assert rows["CUST-00002"] == "original reason"

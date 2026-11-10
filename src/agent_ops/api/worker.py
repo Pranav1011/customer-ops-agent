@@ -11,9 +11,10 @@ dedicated worker processes — the interface here is intentionally the same shap
 
 from __future__ import annotations
 
+import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any
 
@@ -21,7 +22,7 @@ from sqlalchemy import update
 
 from agent_ops.agent.graph import run_ticket
 from agent_ops.backend.db import session_scope
-from agent_ops.backend.models import Job, Ticket
+from agent_ops.backend.models import Job, Ticket, TraceRecord
 from agent_ops.backend.transitions import (
     JOB_TERMINAL,
     JOB_TRANSITIONS,
@@ -29,6 +30,8 @@ from agent_ops.backend.transitions import (
     check_transition,
 )
 from agent_ops.config import get_settings
+
+log = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -73,21 +76,39 @@ def _rq_job() -> Any:
     return get_current_job()
 
 
+def _as_utc(ts: datetime) -> datetime:
+    """SQLite hands datetimes back naive; they were written in UTC."""
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+
+
 def _claim(job_id: str) -> bool:
     """Move a delivered job to running. False means this delivery must not run it.
 
     A job already succeeded or failed is a duplicate delivery and is skipped. A
-    job already running is only resumed when RQ re-delivers it (its previous
-    worker died mid-run); on the thread backend it means a second dispatch."""
+    job already running is resumed only under RQ and only once its execution is
+    older than the RQ job timeout: by then RQ has killed that execution, so this
+    is RQ re-delivering an abandoned job, not a second copy racing a live one."""
     with session_scope() as s:
         job = s.get(Job, job_id)
-        status = job.status if job is not None else None
-    if status is None:
-        return True
+        if job is None:
+            return True
+        status, updated_at = job.status, job.updated_at
     if status in JOB_TERMINAL:
         return False
     if status == "running":
-        return _rq_job() is not None
+        if _rq_job() is None:
+            return False
+        from agent_ops.api.queue_redis import JOB_TIMEOUT
+
+        if _now() - _as_utc(updated_at) < timedelta(seconds=JOB_TIMEOUT):
+            return False
+        with session_scope() as s:  # compare-and-set, so only one re-delivery resumes it
+            moved = s.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.status == "running", Job.updated_at == updated_at)  # type: ignore[arg-type]
+                .values(updated_at=_now())
+            ).rowcount
+        return moved == 1
     try:
         _transition(job_id, "running")
     except IllegalTransition:
@@ -95,24 +116,34 @@ def _claim(job_id: str) -> bool:
     return True
 
 
-def mark_ticket_failed(ticket_id: str | None) -> None:
-    """Record that the latest run of a ticket failed, so it doesn't sit 'open'."""
+def mark_ticket_failed(ticket_id: str | None, started_at: datetime | None = None) -> None:
+    """Record that the latest run of a ticket failed, so it doesn't sit 'open'.
+
+    A run that finished after `started_at` (a newer re-run of the same ticket)
+    already owns the ticket's status, so a stale failure leaves it alone."""
     if not ticket_id:
         return
     with session_scope() as s:
         t = s.get(Ticket, ticket_id)
-        if t is not None:
-            t.resolution_status = "failed"
+        if t is None:
+            return
+        if started_at is not None and t.run_id:
+            latest = s.get(TraceRecord, t.run_id)
+            if latest is not None and _as_utc(latest.created_at) >= started_at:
+                return
+        t.resolution_status = "failed"
 
 
-def _record_failure(job_id: str, ticket_id: str, error: str, rq_job: Any) -> None:
+def _record_failure(
+    job_id: str, ticket_id: str | None, error: str, rq_job: Any, started_at: datetime | None
+) -> None:
     """Mark the job failed, or back to queued while RQ still has a retry for it
     (a sync RQ queue never retries)."""
     if rq_job is not None and rq_job.should_retry and rq_job.worker_name != "sync":
         _transition(job_id, "queued", error=error)
         return
     _transition(job_id, "failed", error=error)
-    mark_ticket_failed(ticket_id)
+    mark_ticket_failed(ticket_id, started_at)
 
 
 def mark_dead_lettered(job_id: str, ticket_id: str | None) -> None:
@@ -120,6 +151,23 @@ def mark_dead_lettered(job_id: str, ticket_id: str | None) -> None:
     worker was killed): close it as failed instead of leaving it unfinished."""
     _transition(job_id, "failed", error="dead-lettered by the queue")
     mark_ticket_failed(ticket_id)
+
+
+def on_rq_failure(rq_job: Any, connection: Any, exc_type: Any, exc: Any, tb: Any) -> None:
+    """RQ failure callback. process_job records its own failures, so this only
+    acts on a job RQ failed without it: an execution whose worker was killed
+    (RQ's abandoned-job cleanup). Such a job would otherwise stay 'running'.
+    It never raises, because RQ runs it inside its registry cleanup."""
+    try:
+        with session_scope() as s:
+            job = s.get(Job, rq_job.id)
+            if job is None or job.status != "running":
+                return
+            ticket_id = job.ticket_id
+        error = f"{getattr(exc_type, '__name__', 'Error')}: worker lost mid-run"
+        _record_failure(rq_job.id, ticket_id, error, rq_job, None)
+    except Exception:
+        log.exception("could not record RQ failure for job %s", getattr(rq_job, "id", "?"))
 
 
 def process_job(
@@ -134,13 +182,14 @@ def process_job(
     On failure the job is recorded and, under RQ, the exception is re-raised so
     RQ's retry and dead-letter handling see it. The thread pool has no retry, so
     there the failure ends with the recorded status."""
+    started_at = _now()
     if not _claim(job_id):
         return
     try:
         r = run_ticket(body, ticket_id=ticket_id, customer_id=customer_id, order_id=order_id)
     except Exception as e:  # a job failure must not take down the pool
         rq_job = _rq_job()
-        _record_failure(job_id, ticket_id, f"{type(e).__name__}: {e}", rq_job)
+        _record_failure(job_id, ticket_id, f"{type(e).__name__}: {e}", rq_job, started_at)
         if rq_job is not None:
             raise
         return
@@ -154,7 +203,12 @@ def process_job(
         "escalation_reason": r["escalation_reason"],
         "summary": r["summary"],
     }
-    _transition(job_id, "succeeded", run_id=r["run_id"], result=result, error=None)
+    try:
+        _transition(job_id, "succeeded", run_id=r["run_id"], result=result, error=None)
+    except IllegalTransition:
+        # The ticket ran; only the bookkeeping lost a race. Raising here would
+        # make RQ retry, i.e. run the whole ticket again.
+        log.warning("job %s finished but its status had moved; result not recorded", job_id)
 
 
 def enqueue(
@@ -182,14 +236,18 @@ def _dispatch(
         _executor().submit(process_job, job_id, body, ticket_id, customer_id, order_id)
 
 
-def requeue(job_id: str, payload: dict[str, Any], ticket_id: str | None) -> None:
+def requeue(job_id: str, payload: dict[str, Any], ticket_id: str | None) -> bool:
     """Re-dispatch an existing crash-orphaned job under its own id, from the
-    payload persisted at enqueue time. Idempotency keeps the re-run safe."""
+    payload persisted at enqueue time. Idempotency keeps the re-run safe.
+    Returns False if a concurrent reconcile already re-queued it."""
     with session_scope() as s:
         job = s.get(Job, job_id)
         status = job.status if job is not None else None
     if status is not None and status != "queued":
-        _transition(job_id, "queued")
+        try:
+            _transition(job_id, "queued")
+        except IllegalTransition:
+            return False  # a concurrent reconcile (API and worker both run one) got it first
     _dispatch(
         job_id,
         str(payload.get("body", "")),
@@ -197,6 +255,7 @@ def requeue(job_id: str, payload: dict[str, Any], ticket_id: str | None) -> None
         payload.get("customer_id"),
         payload.get("order_id"),
     )
+    return True
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:

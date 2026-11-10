@@ -23,18 +23,23 @@ def open_escalation(
     reason: str,
     context: dict[str, Any],
 ) -> Escalation:
-    """Return the ticket's open escalation, refreshed to this run, or open one."""
+    """Return the ticket's open escalation, refreshed to this run, or open one.
+
+    Only an escalation raised for the same customer is reused, so a call naming
+    some other customer's ticket can never rewrite that customer's escalation."""
     existing = None
     if ticket_id is not None:
         existing = s.exec(
-            select(Escalation).where(Escalation.ticket_id == ticket_id, Escalation.status == "open")
+            select(Escalation).where(
+                Escalation.ticket_id == ticket_id,
+                Escalation.status == "open",
+                Escalation.customer_id == customer_id,
+            )
         ).first()
     if existing is not None:
         existing.run_id = run_id
         existing.reason = reason
         existing.context = context
-        if customer_id is not None:
-            existing.customer_id = customer_id
         s.add(existing)
         s.flush()
         return existing
