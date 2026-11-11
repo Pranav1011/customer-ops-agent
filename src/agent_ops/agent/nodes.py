@@ -26,6 +26,7 @@ from agent_ops.config import get_settings
 from agent_ops.llm.base import LLMProvider
 from agent_ops.memory.long_term import recall, record_resolution
 from agent_ops.memory.short_term import compact_scratchpad
+from agent_ops.policy.action_claims import unbacked_action_claims
 from agent_ops.policy.engine import evaluate_action
 from agent_ops.policy.injection import scan
 from agent_ops.policy.reply_scope import reply_scope_violations
@@ -434,6 +435,33 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
         reply = (
             "Thanks for reaching out. I want to make sure I only share details from your own account, "
             "so I've passed this to a specialist who will follow up with you shortly."
+        )
+
+    # Guardrail: action claims. The reply may only say a refund, cancellation,
+    # address change or credit is done if that write succeeded in this run. A real
+    # model can draft "we've processed your refund" on a run that escalated before
+    # any write; that reply is replaced, and an unescalated run escalates.
+    unbacked = unbacked_action_claims(reply, state.get("actions_taken", []))
+    if unbacked:
+        _event(
+            state,
+            "guard",
+            decision="action_claim_fail",
+            reason=f"reply claimed action(s) with no successful write in this run: {unbacked}",
+        )
+        if not escalated:
+            escalated = True
+            state["escalated"] = True
+            state["stop_reason"] = "escalate"
+            state["escalation_reason"] = (
+                f"reply claimed action(s) {unbacked} that this run did not perform; escalated"
+            )
+            _event(
+                state, "escalation", reason=state["escalation_reason"], rule="action_claim_guard"
+            )
+        reply = (
+            "Thanks for reaching out. I can't confirm that change on your account yet, so "
+            "I've passed your request to a specialist who will follow up with you shortly."
         )
 
     status = "escalated" if escalated else "resolved"
