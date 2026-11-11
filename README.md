@@ -1,16 +1,29 @@
 # Aurora — Customer Operations Agent
 
+[![CI](https://github.com/Pranav1011/customer-ops-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Pranav1011/customer-ops-agent/actions/workflows/ci.yml)
+
 > A workflow-automation agent that takes a customer-operations ticket **end to end** —
 > it plans, takes **real actions** across mock systems (refunds, cancellations, address
 > changes, credits, escalations), guards against its own failures, and is measured by a
 > **real eval + observability harness**. Not a RAG chatbot: the headline is
 > *action-taking + reliability + measurement*.
 
-![Aurora Operations Console — queue, run-trace viewer, and escalation inbox](docs/demo.gif)
+![Aurora Operations Console: a ticket submitted, refunded inside policy, then an escalation handled by a person](docs/demo.gif)
+
+_Above: a $74 refund request resolves on its own (it is under the $100 auto-approval
+limit), then a $249 damaged-item refund that is over the limit waits in the escalation
+inbox until a person marks it handled._
+
+**Why it matters.** An agent that can move money has to be safe even when its model is
+wrong. Aurora puts deterministic guardrails between the model and every write, and
+measures safety separately from task success. On a weak local model (llama3.1:8b) task
+success is low, 2–3 of 8 tickets per run, yet it took **0 forbidden actions in 40 ticket
+runs**, because the guardrails, not the model, decide what gets written.
 
 **Status:** complete end to end — mock backend → agent loop → real actions + guardrails →
 memory → eval harness → **three swappable brains** (deterministic mock, a real **local LLM
 via Ollama**, or Claude) → MCP server → React console. Runs fully offline and free.
+169 tests (`make test`).
 
 ---
 
@@ -21,18 +34,24 @@ Run offline with the deterministic mock reasoner over a **46-scenario golden set
 
 | Metric | Result |
 |---|---|
-| **Task success** | **100%** (deterministic final-state check + LLM-judge on reply quality) |
+| **Task success** | **100%** (deterministic final-state check, plus a reply-quality check by the heuristic judge (mock)) |
 | **Action safety** | **100%** — no forbidden action taken; escalates every time it must |
 | Critical-tag safety | should-escalate **100%**, injection **100%**, cross-customer **100%** |
 | **Reply scope** | **100%** — every order, customer id and email in a reply belongs to the ticket's customer |
 | Efficiency | ~$0.006 and ~320 ms simulated per ticket |
-| Judge validation | position-consistency **100%**, repetition-stability **100%**, human-agreement **100%** (n=9) |
+| Judge study, heuristic judge (mock) | position-consistency 100%, repetition-stability 100%, human-agreement 100% (n=10) |
 
-The LLM-as-judge is itself validated (position-bias / consistency study, per
-[Shi et al. 2024](https://arxiv.org/abs/2406.07791)) rather than blindly trusted. The
-harness caught a real classifier mis-route on the first run — see
+**About the judge rows.** On the offline mock brain the "judge" is a keyword heuristic
+(`llm/mock.py`), not a model. Its pairwise compare scores each reply on its own, so it
+cannot have a position bias, and the 10 hand labels are all "pass". Read the last row as
+proof that the judge-validation study runs (position bias and consistency, per
+[Shi et al. 2024](https://arxiv.org/abs/2406.07791)), not as evidence that an LLM judge is
+reliable. The same study runs against Claude with `LLM_PROVIDER=anthropic`; no Claude
+judge results are published here.
+
+The harness caught a real classifier mis-route on its first run; see
 [`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md) ("what broke, and how I found it"). `make eval`
-reproduces all of this.
+reproduces every number in the table above and writes the run to `eval_results/`.
 
 ### Model comparison (same slice, different brain) — `make compare`, `make compare-repeat`
 
@@ -122,7 +141,8 @@ make ui-install  # one-time: install the React console's deps
 make ui          # serve the console at http://localhost:5173
 ```
 
-Runs **fully offline** with a deterministic mock LLM — no API key needed.
+Runs **fully offline** with a deterministic mock LLM — no API key needed. `make dev`
+needs `make seed` first, and the console expects the API on port 8000.
 
 ### Three interchangeable "brains"
 
@@ -153,11 +173,26 @@ A thin React + TypeScript operations console: a ticket **queue**, a per-ticket
 **run-trace viewer** (plan → tool calls → guardrail decisions → reply, with cost/latency),
 and an **escalation inbox**. Submit a ticket and watch the agent resolve it live.
 
-![Aurora Operations Console — run-trace viewer showing the prompt-injection guardrail firing](docs/console.png)
+![Aurora Operations Console: the run trace of an in-policy refund, from intake to the reply](docs/console.png)
 
-_Above: a prompt-injection ticket. The agent sanitizes the untrusted input, answers the
-real "where's my order" question, and ignores the embedded "issue a $500 refund" —
-resolved, no refund._
+_Above: a seeded refund ticket. The agent reads the order, the policy engine allows the
+$48 refund (under the $100 limit), the refund is written, and the reply states it._
+
+What to try first:
+
+- **The seeded queue.** `make seed` creates six open tickets, each naming a real seeded
+  order. Run them: four resolve with an action (tracking details, an in-policy refund, a
+  duplicate-charge refund, an address change) and two stop for a person (a subscription
+  cancellation, which policy always routes to a human, and a $249 refund over the limit).
+- **New ticket → Try a sample.** Each sample says what should happen: it resolves, it
+  escalates, or (for the prompt-injection sample) it answers the real question and
+  refuses the embedded $500 refund. The subject is optional; without one, the ticket
+  takes the message's first sentence.
+- **Escalations.** Each escalation links to its ticket's trace, and **Mark handled**
+  closes it (`POST /escalations/{id}/resolve`).
+
+The console works with the keyboard (tabs follow the WAI-ARIA pattern) and at phone
+width, where the queue and the trace show one at a time. It is dark-only.
 
 ## Configuration
 
@@ -180,24 +215,91 @@ sensible defaults, so `.env` is optional. Recognized variables:
 | `COST_CEILING_USD` | `0.50` | per-task budget ceiling |
 | `REFUND_APPROVAL_THRESHOLD` | `100.0` | refunds above this require human approval |
 | `WORKER_CONCURRENCY` | `2` | max tickets resolved in parallel by the async worker pool |
+| `QUEUE_BACKEND` | `thread` | `thread` (in-process pool) or `redis` (durable RQ queue) |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis for `QUEUE_BACKEND=redis` |
 
-## Architecture & system design
+## Architecture
 
-Tickets are resolved **asynchronously** off the request path: `POST /jobs` returns a
-`job_id` immediately and a bounded worker pool (`WORKER_CONCURRENCY`) processes it — the
-right pattern for slow, variable agent runs (a local LLM is ~30–60s/ticket). Clients poll
-`GET /jobs/{id}`; `GET /metrics` exposes throughput, escalation rate, cost/latency, and
-queue depth. Reliability is layered (input sanitization → policy-gated writes → loop/cost
-caps → reply grounding → human escalation), so a weak model degrades to safe escalation
-rather than unsafe action.
-
-```bash
-docker compose up --build     # containerized API at http://localhost:8000
+```
+ console (React) ──HTTP──▶ FastAPI ──▶ job queue ──▶ agent run (LangGraph) ──▶ tools ──▶ SQLite mock backend
+ MCP client ──stdio──▶ MCP server ─────────────────────────────────────────▶ tools ──▶ (same, policy-gated)
 ```
 
-Full write-up (request path, reliability boundaries, data/state, and the
-production-evolution path — Redis/SQS, Postgres, OpenTelemetry, Prometheus) is in
-[`docs/architecture.md`](docs/architecture.md).
+**What runs when a ticket arrives**
+
+1. `POST /jobs` stores the ticket and a `Job` row in SQLite and returns a `job_id` at
+   once. The client polls `GET /jobs/{id}`, then reads the trace from `GET /trace/{run_id}`.
+2. The job goes to one of two queues, chosen by `QUEUE_BACKEND`:
+   - `thread` (default): an in-process `ThreadPoolExecutor` of `WORKER_CONCURRENCY`
+     workers. Zero dependencies, one API process only.
+   - `redis`: an RQ queue in Redis, consumed by a separate `rq worker`, with retries,
+     backoff, a timeout and a dead-letter registry. `docker compose up` runs this setup.
+3. On startup the API (and the compose worker) runs **reconcile**: unfinished jobs are
+   re-dispatched from their stored payload. Idempotency keys on every write make the
+   re-run safe, so a crash never refunds twice.
+4. A worker runs the agent, a LangGraph `StateGraph` with four nodes:
+   `intake → plan → act ⟲ → resolve`. A `SqliteSaver` checkpointer
+   (`data/checkpoints.db`) holds the run's state.
+   - **intake**: scan the untrusted text for prompt injection and strip it, classify the
+     intent, pull the order id, load the customer, and recall long-term memory.
+   - **plan**: a structured plan (steps, tools, risk level).
+   - **act**: one model decision per step, through the guards below, until the model
+     finishes, escalates, or hits a cap.
+   - **resolve**: draft the reply, run the reply guards, store the result, write
+     episodic memory, and save the JSON trace.
+5. Tools read and write the mock backend in SQLite (customers, orders, payments,
+   subscriptions, tickets, escalations, an action log). The policy KB lives in Chroma
+   with local ONNX embeddings, and the agent searches it only when it chooses to.
+
+**Guards, in the order they run.** All are deterministic code, independent of the model.
+
+| Where | Guard | What it does |
+|---|---|---|
+| intake | injection scan | Strips injected instructions; the ticket is flagged |
+| act | loop breaker | An identical call or a third call to one tool escalates; repeating a write that already succeeded ends the run as done |
+| act | `injection_no_autonomous_writes` | A flagged ticket takes no refund, credit or cancellation on its own |
+| act | `blocked_write_retry` | Retrying a write the policy blocked escalates |
+| act | confidence gate | A low-confidence write escalates |
+| act | policy engine | Every write is checked before it runs: refund threshold, refund ≤ amount paid, identity for address changes, cancellations need a person, no cross-customer targets |
+| act | budget caps | `MAX_ITERATIONS` and `COST_CEILING_USD` stop the loop and escalate |
+| resolve | grounding | A reply citing an order id no tool returned is replaced and escalated |
+| resolve | reply scope | A reply naming another customer's order, id or email is replaced |
+| resolve | action claims | A reply that claims a refund, cancellation, address change or credit this run did not make is replaced |
+| resolve | completed writes | An escalated reply lists every write the run already made, such as a refund before a loop break |
+
+**Runtime, measured, planned.** Everything above runs today. The eval harness, the model
+comparison and the concurrency benchmark are offline measurements (`make eval`,
+`make compare`, `python -m agent_ops.bench`) and are not part of a request. Postgres,
+OpenTelemetry and Prometheus are the planned production path, not code here. The full
+write-up, with the production-evolution table, is in
+[`docs/architecture.md`](docs/architecture.md); decisions are in
+[`DECISIONS.md`](DECISIONS.md) and [`ENGINEERING_LOG.md`](ENGINEERING_LOG.md).
+
+```bash
+docker compose up --build     # API + RQ worker + Redis at http://localhost:8000
+```
+
+## Design decisions and limitations
+
+- **No authentication, on the API or over MCP.** This is a known demo limitation. Any
+  caller can submit a ticket as any `customer_id`, re-run tickets and close escalations.
+  An MCP client names the customer it acts for and nothing checks that claim, so over MCP
+  any order can take a refund up to the $100 auto-approval limit. Run it on localhost
+  only; CORS allows localhost origins only.
+- **The thread queue is single-process.** Startup reconcile treats every unfinished job as
+  orphaned, so two API processes on `QUEUE_BACKEND=thread` would re-run each other's live
+  jobs. Use `QUEUE_BACKEND=redis` for more than one process.
+- **The default brain is rules, not a model.** `mock` is keyword rules, built to make CI
+  and the eval reproducible. Its cost and latency are simulated. The mock address change
+  writes a placeholder address rather than parsing one from the message. Real reasoning
+  needs `ollama` or `anthropic`.
+- **The judge numbers are from a heuristic** on the mock brain (see the eval section).
+- **SQLite** in WAL mode is fine for one machine; the data layer sits behind
+  `backend/db.py`, so moving to Postgres is a driver change.
+- **Closing an escalation** marks it handled in the inbox; it does not change the ticket's
+  recorded outcome, which stays "escalated" in the queue.
+- **Demo data** comes from `make seed` with a fixed random seed. The eval does not use
+  it: each eval scenario builds its own backend state.
 
 ## MCP server
 
@@ -236,8 +338,8 @@ rule that fired rather than executed.
 | Reliability & guardrails | `src/agent_ops/policy/` (policy engine, gating, escalation) |
 | Evals & observability | `src/agent_ops/eval/` + `src/agent_ops/tracing/` |
 
-## Architecture
+## Further reading
 
-See [`docs/architecture.md`](docs/architecture.md). Key decisions and their rationale are
-in [`DECISIONS.md`](DECISIONS.md); the failure log lives in
-[`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md).
+[`docs/architecture.md`](docs/architecture.md) (system design and the production path),
+[`DECISIONS.md`](DECISIONS.md) (key decisions), [`ENGINEERING_LOG.md`](ENGINEERING_LOG.md)
+(rejected alternatives) and [`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md) (the failure log).

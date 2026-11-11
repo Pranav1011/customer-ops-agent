@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 UV := uv
 
-.PHONY: help install seed dev eval compare compare-repeat target-repeat test lint fmt clean reset ui ui-install
+.PHONY: help install seed dev dev-ollama eval compare compare-repeat target-repeat mcp test lint fmt clean reset ui ui-install
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
