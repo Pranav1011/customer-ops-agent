@@ -176,3 +176,72 @@ def test_grounding_guard_escalates_on_hallucinated_order_id():
     assert "ORD-999999" not in final["resolution"]["customer_reply"]
     # The run stopped on an escalation, not a clean finish.
     assert final["stop_reason"] == "escalate"
+
+
+def _scripted(moves, reply="Thanks, all handled."):
+    """A provider that plays a fixed list of decisions, then finishes."""
+
+    class Scripted(_StubProvider):
+        def __init__(self):
+            super().__init__()
+            self.moves = list(moves)
+
+        def classify(self, request_text):
+            return IntentResult(intent=Intent.refund, confidence=0.9)
+
+        def decide(self, view):
+            return self.moves.pop(0) if self.moves else Decision(action=DecisionAction.finish)
+
+        def compose_reply(self, view):
+            return reply
+
+    return Scripted()
+
+
+def _refund_move(o: dict) -> Decision:
+    return Decision(
+        action=DecisionAction.call_tool,
+        tool="issue_refund",
+        args={"order_id": o["id"], "amount": o["total"], "reason": "customer refund request"},
+        confidence=1.0,
+    )
+
+
+def test_repeating_a_write_that_succeeded_finishes_instead_of_escalating():
+    o = _fresh_order(max_total=100.0)
+    provider = _scripted([_refund_move(o), _refund_move(o)], reply="Your refund is done.")
+    final = _run_with(provider, run_id="dup-write", customer_id=o["customer_id"])
+
+    assert final["escalated"] is False
+    assert final["stop_reason"] == "finish"
+    assert final["actions_taken"] == ["issue_refund"]
+    assert any(e.get("decision") == "repeat_of_done_write" for e in final["trace_events"])
+    assert not any(e.get("decision") == "loop_break" for e in final["trace_events"])
+    with session_scope() as s:
+        assert s.get(Order, o["id"]).refunded_amount == o["total"]
+
+
+def test_escalated_reply_states_a_refund_the_run_already_made():
+    o = _fresh_order(max_total=100.0)
+    lookup = Decision(
+        action=DecisionAction.call_tool,
+        tool="get_order",
+        args={"order_id": o["id"]},
+        confidence=1.0,
+    )
+    # Refund, then loop on the same lookup: the loop breaker escalates after the
+    # refund has already gone through.
+    provider = _scripted([_refund_move(o), lookup, lookup])
+    final = _run_with(provider, run_id="loop-after-refund", customer_id=o["customer_id"])
+
+    assert final["escalated"] is True
+    assert any(e.get("decision") == "loop_break" for e in final["trace_events"])
+    reply = final["resolution"]["customer_reply"]
+    assert f"refunded ${o['total']:.2f} on order {o['id']}" in reply
+
+
+def test_escalated_reply_without_writes_is_unchanged():
+    escalate = Decision(action=DecisionAction.escalate, args={"reason": "needs a person"})
+    final = _run_with(_scripted([escalate]), run_id="no-writes", customer_id="CUST-00001")
+    assert final["escalated"] is True
+    assert final["resolution"]["customer_reply"] == "Thanks, all handled."

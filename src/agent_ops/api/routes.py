@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,20 @@ class SubmitTicket(BaseModel):
     subject: str = ""
 
 
+_SUBJECT_MAX = 60
+
+
+def ticket_subject(subject: str, body: str) -> str:
+    """The subject the sender gave, or one taken from the message's first sentence."""
+    if subject.strip():
+        return subject.strip()[:_SUBJECT_MAX]
+    first = re.split(r"(?<=[.!?])\s|\n", body.strip(), maxsplit=1)[0].strip()
+    if len(first) <= _SUBJECT_MAX:
+        return first
+    cut = first[: _SUBJECT_MAX - 1].rsplit(" ", 1)[0].rstrip(",;:")
+    return cut + "…"
+
+
 class JobRef(BaseModel):
     job_id: str
     ticket_id: str
@@ -60,7 +75,7 @@ def submit_ticket(payload: SubmitTicket) -> TicketResult:
                 id=ticket_id,
                 customer_id=payload.customer_id,
                 channel=payload.channel,
-                subject=payload.subject,
+                subject=ticket_subject(payload.subject, payload.body),
                 body=payload.body,
                 status="open",
             )
@@ -100,7 +115,7 @@ def submit_job(payload: SubmitTicket) -> JobRef:
                 id=ticket_id,
                 customer_id=payload.customer_id,
                 channel=payload.channel,
-                subject=payload.subject,
+                subject=ticket_subject(payload.subject, payload.body),
                 body=payload.body,
                 status="open",
             )
@@ -280,19 +295,32 @@ def list_escalations(status: str = "open", limit: int = 50) -> dict[str, Any]:
             .order_by(Escalation.created_at.desc())
             .limit(limit)
         ).all()
-        return {
-            "count": len(rows),
-            "escalations": [
-                {
-                    "id": e.id,
-                    "ticket_id": e.ticket_id,
-                    "customer_id": e.customer_id,
-                    "run_id": e.run_id,
-                    "reason": e.reason,
-                    "context": e.context,
-                    "status": e.status,
-                    "created_at": _iso_utc(e.created_at),
-                }
-                for e in rows
-            ],
-        }
+        return {"count": len(rows), "escalations": [_escalation_view(e) for e in rows]}
+
+
+@router.post("/escalations/{escalation_id}/resolve")
+def resolve_escalation(escalation_id: int) -> dict[str, Any]:
+    """A human closes an escalation once they have handled the ticket."""
+    with session_scope() as s:
+        e = s.get(Escalation, escalation_id)
+        if e is None:
+            raise HTTPException(404, f"escalation not found: {escalation_id}")
+        if e.status != "open":
+            raise HTTPException(409, f"escalation {escalation_id} is already {e.status}")
+        e.status = "resolved"
+        s.add(e)
+        s.flush()
+        return _escalation_view(e)
+
+
+def _escalation_view(e: Escalation) -> dict[str, Any]:
+    return {
+        "id": e.id,
+        "ticket_id": e.ticket_id,
+        "customer_id": e.customer_id,
+        "run_id": e.run_id,
+        "reason": e.reason,
+        "context": e.context,
+        "status": e.status,
+        "created_at": _iso_utc(e.created_at),
+    }

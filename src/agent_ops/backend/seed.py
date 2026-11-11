@@ -42,6 +42,121 @@ PRODUCTS = [
 CARRIERS = ["UPS", "FedEx", "USPS", "DHL"]
 
 
+# The console's sample tickets use the first few customers, so the queue's demo
+# tickets are drawn from later ones and the two never refund the same order.
+_DEMO_FIRST_CUSTOMER = 10
+
+
+def _demo_tickets(
+    customers: list[Customer],
+    orders: list[Order],
+    payments: list[Payment],
+    subscriptions: list[Subscription],
+) -> list[Ticket]:
+    """Open tickets for the console's queue, each naming a real seeded record so
+    the agent can act on it. Together they show both outcomes: four resolve with
+    an action (a tracking answer, an in-policy refund, a duplicate-charge refund,
+    an address change) and two stop for a human (a cancellation, which policy
+    always routes to a person, and a refund over the auto-approval threshold)."""
+    pool = {c.id: c for c in customers[_DEMO_FIRST_CUSTOMER:]}
+    used: set[str] = set()
+
+    def pick_order(match, *, verified: bool = False) -> Order:
+        for o in orders:
+            c = pool.get(o.customer_id)
+            if c is None or c.id in used or (verified and not c.identity_verified):
+                continue
+            if match(o):
+                used.add(c.id)
+                return o
+        raise RuntimeError("seed has no order for a demo ticket")
+
+    def has_item(o: Order, name: str) -> bool:
+        return any(i["name"] == name for i in o.items)
+
+    paid = {p.order_id for p in payments if not p.is_duplicate}
+    shipped = pick_order(lambda o: o.status == "shipped")
+    stale_tea = pick_order(
+        lambda o: (
+            o.status == "delivered"
+            and o.id in paid
+            and o.total <= 100
+            and has_item(o, "Aurora Wellness Tea Box")
+        )
+    )
+    dup = next(
+        p
+        for p in payments
+        if p.is_duplicate
+        and p.amount <= 100
+        and p.customer_id in pool
+        and p.customer_id not in used
+    )
+    used.add(dup.customer_id)
+    unshipped = pick_order(lambda o: o.status in ("placed", "packed"), verified=True)
+    torn = pick_order(
+        lambda o: (
+            o.status == "delivered"
+            and o.id in paid
+            and o.total > 100
+            and has_item(o, "Aurora Weighted Blanket")
+        )
+    )
+    sub = next(
+        x
+        for x in subscriptions
+        if x.status == "active" and x.customer_id in pool and x.customer_id not in used
+    )
+
+    specs = [
+        (
+            shipped.customer_id,
+            "Where is my order?",
+            f"Hi, where is my order {shipped.id}? I ordered a while ago and it still hasn't "
+            "arrived.",
+        ),
+        (
+            stale_tea.customer_id,
+            "Refund for a stale tea box",
+            f"The tea box in order {stale_tea.id} tastes stale. I'd like a refund, please.",
+        ),
+        (
+            sub.customer_id,
+            "Cancel my subscription",
+            "Please cancel my subscription. The monthly box is too much for me right now.",
+        ),
+        (
+            dup.customer_id,
+            "Charged twice",
+            f"I was charged twice for order {dup.order_id}. Can you check and refund the extra "
+            "charge?",
+        ),
+        (
+            unshipped.customer_id,
+            "Change shipping address",
+            f"I moved. Can you change the shipping address on order {unshipped.id} before it "
+            "ships?",
+        ),
+        (
+            torn.customer_id,
+            "Blanket arrived damaged",
+            f"The weighted blanket in order {torn.id} arrived torn at the seam. Very disappointed.",
+        ),
+    ]
+    by_id = {c.id: c for c in customers}
+    return [
+        Ticket(
+            id=f"TCK-{idx:06d}",
+            customer_id=cid,
+            channel=by_id[cid].prefers_channel,
+            subject=subject,
+            body=body,
+            status="open",
+        )
+        for idx, (cid, subject, body) in enumerate(specs, start=1)
+    ]
+
+
 def generate() -> dict[str, int]:
     fake = Faker()
     Faker.seed(SEED)
@@ -52,7 +167,6 @@ def generate() -> dict[str, int]:
     orders: list[Order] = []
     subscriptions: list[Subscription] = []
     payments: list[Payment] = []
-    tickets: list[Ticket] = []
 
     order_seq = 0
     pay_seq = 0
@@ -190,33 +304,7 @@ def generate() -> dict[str, int]:
                 )
             )
 
-    # A few sample open tickets so the queue view has content on first boot.
-    sample_bodies = [
-        (
-            "Where is my order?",
-            "Hi, I ordered a while ago and it still hasn't arrived. Can you tell me where it is?",
-        ),
-        ("Refund please", "The tea box I got tastes stale, I'd like my money back."),
-        (
-            "Cancel my subscription",
-            "I want to cancel my monthly box subscription, it's too much right now.",
-        ),
-        ("Charged twice", "I think I was charged twice for the same order, please check."),
-        ("Change shipping address", "I moved — can you send my order to my new address?"),
-        ("Arrived damaged", "My weighted blanket arrived torn at the seam. Very disappointed."),
-    ]
-    for idx, (subject, body) in enumerate(sample_bodies, start=1):
-        cust = customers[idx * 7 % len(customers)]
-        tickets.append(
-            Ticket(
-                id=f"TCK-{idx:06d}",
-                customer_id=cust.id,
-                channel=cust.prefers_channel,
-                subject=subject,
-                body=body,
-                status="open",
-            )
-        )
+    tickets = _demo_tickets(customers, orders, payments, subscriptions)
 
     # Compute summary stats before objects are detached by the session commit.
     n_double = sum(1 for p in payments if p.is_duplicate)

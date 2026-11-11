@@ -106,6 +106,15 @@ def intake(state: AgentState, config: RunnableConfig) -> AgentState:
         if m:
             state["order_id"] = m.group(0).upper()
 
+    _event(
+        state,
+        "intent",
+        intent=state["intent"],
+        confidence=result.confidence,
+        order_id=state.get("order_id"),
+        rationale=result.rationale,
+    )
+
     # Pull the customer profile so downstream steps know identity/tier.
     if state.get("customer_id"):
         res = REGISTRY.run("get_customer", {"customer_id": state["customer_id"]}, _ctx(state))
@@ -131,14 +140,6 @@ def intake(state: AgentState, config: RunnableConfig) -> AgentState:
         state["memory"] = mem
         _event(state, "memory_recall", memory=mem)
 
-    _event(
-        state,
-        "intent",
-        intent=state["intent"],
-        confidence=result.confidence,
-        order_id=state.get("order_id"),
-        rationale=result.rationale,
-    )
     return state
 
 
@@ -225,8 +226,21 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
     # Guardrail: runaway-loop breaker. A real (esp. small) model can get stuck
     # re-calling the same tool without making progress. If it repeats an
     # identical call, or calls the same tool a 3rd time, stop and escalate.
+    # Repeating a write that already succeeded with the same arguments is the
+    # exception: the work is done, so the run finishes instead of escalating.
     sig = tool + ":" + json.dumps(decision.args, sort_keys=True, default=str)
     sigs = state.setdefault("call_sigs", [])
+    if sig in state.get("done_writes", []):
+        _event(
+            state,
+            "guard",
+            decision="repeat_of_done_write",
+            tool=tool,
+            reason=f"'{tool}' already succeeded with these arguments; not repeated",
+        )
+        state["done"] = True
+        state["stop_reason"] = "finish"
+        return state
     same_tool = sum(1 for s in sigs if s.split(":", 1)[0] == tool)
     if sig in sigs or same_tool >= 2:
         _event(
@@ -333,6 +347,7 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
             )
             if result.ok:
                 state.setdefault("actions_taken", []).append(tool)
+                state.setdefault("done_writes", []).append(sig)
             _event(state, "tool_call", tool=tool, args=decision.args, result=result.to_dict())
     else:
         result = REGISTRY.run(tool, decision.args, _ctx(state))
@@ -466,6 +481,14 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
             "I've passed your request to a specialist who will follow up with you shortly."
         )
 
+    # An escalated reply is a hand-off note, so it would not mention a write
+    # this run already made (say a refund before a loop break). State each one,
+    # from the tool results, so the customer is not told less than happened.
+    if escalated:
+        done = completed_actions(state.get("scratchpad", []))
+        if done:
+            reply = f"{reply} Already done on your account: {'; '.join(done)}."
+
     status = "escalated" if escalated else "resolved"
     resolution = Resolution(
         status=status,
@@ -494,6 +517,33 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
         _event(state, "memory_write", entry=entry)
 
     return state
+
+
+def completed_actions(scratchpad: list[dict[str, Any]]) -> list[str]:
+    """Plain-language lines for the writes that succeeded, in the order they ran."""
+    lines: list[str] = []
+    for entry in scratchpad:
+        result = entry.get("result") or {}
+        if not result.get("ok"):
+            continue
+        data = result.get("data") or {}
+        tool = entry.get("tool")
+        try:
+            if tool == "issue_refund":
+                line = f"refunded ${float(data['amount']):.2f} on order {data['order_id']}"
+            elif tool == "update_shipping_address":
+                line = f"updated the shipping address on order {data['order_id']}"
+            elif tool == "apply_account_credit":
+                line = f"added ${float(data['amount']):.2f} account credit"
+            elif tool == "cancel_subscription":
+                line = f"cancelled subscription {data['subscription_id']}"
+            else:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        if line not in lines:
+            lines.append(line)
+    return lines
 
 
 def _persist(state: AgentState, status: str, reply: str) -> None:

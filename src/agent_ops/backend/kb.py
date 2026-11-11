@@ -7,17 +7,23 @@ a tool it *chooses* to call, not a mandatory pre-step.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Any
-
-import chromadb
-import onnxruntime
-
-from agent_ops.config import get_settings
 
 # The embeddings run on ONNX Runtime, whose telemetry uploader runs on its own
 # native thread. An upload still in flight when the process exits aborts it
 # (libc++ recursive_mutex error during teardown), and nothing here needs it.
+# The variable must be set before the import: when the runtime cannot store its
+# telemetry device id under $HOME, it writes a stray ":memory:.ses" file into
+# the working directory instead.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
+import chromadb  # noqa: E402
+import onnxruntime  # noqa: E402
+
+from agent_ops.config import get_settings  # noqa: E402
+
 onnxruntime.disable_telemetry_events()
 
 _COLLECTION = "aurora_kb"

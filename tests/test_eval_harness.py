@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -70,3 +71,18 @@ def test_harness_scores_the_golden_set(isolated_eval_db):
     v = agg["judge_validation"]
     assert v["repetition_stability"] == 1.0
     assert v["position_consistency"] >= 0.9
+
+
+def test_harness_write_leaves_committed_files_alone(isolated_eval_db, tmp_path, monkeypatch):
+    from agent_ops.eval import harness, report
+
+    monkeypatch.setattr(report, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(harness, "REPO_ROOT", tmp_path)
+    committed = Path(report.__file__).resolve().parents[3] / "ERROR_ANALYSIS.md"
+    before = committed.read_bytes()
+
+    harness.run(write=True)
+
+    assert committed.read_bytes() == before
+    assert (tmp_path / "eval_results" / "error-analysis.md").exists()
+    assert (tmp_path / "eval_results" / "latest.json").exists()

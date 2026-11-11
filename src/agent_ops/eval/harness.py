@@ -2,7 +2,8 @@
 
 For each golden scenario it builds a clean, known backend state, runs the agent
 end to end, then scores task success, trajectory, action safety, and efficiency.
-It also validates the LLM-as-judge and appends an error-analysis section.
+It also runs the judge-validation study and writes an error-analysis section
+to eval_results/.
 """
 
 from __future__ import annotations
@@ -155,9 +156,10 @@ def run(write: bool = True) -> dict[str, Any]:
     report.print_report(agg)
     if write:
         path = report.write_results(agg, records)
-        report.append_error_analysis(agg, records)
+        analysis = report.write_error_analysis(agg, records)
         report._console.print(
-            f"\nResults written to [cyan]{path.relative_to(REPO_ROOT)}[/] and ERROR_ANALYSIS.md"
+            f"\nResults written to [cyan]{path.relative_to(REPO_ROOT)}[/] and "
+            f"[cyan]{analysis.relative_to(REPO_ROOT)}[/]"
         )
     return agg
 

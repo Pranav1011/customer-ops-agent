@@ -1,5 +1,6 @@
 """Rendering + persistence for eval results: a console report, a results JSON,
-and the appended ERROR_ANALYSIS.md section."""
+and a per-run error-analysis section. All of it goes under eval_results/, so a
+run never edits a committed file."""
 
 from __future__ import annotations
 
@@ -79,7 +80,7 @@ def write_results(agg: dict[str, Any], records: list[dict[str, Any]]) -> Path:
     return path
 
 
-def append_error_analysis(agg: dict[str, Any], records: list[dict[str, Any]]) -> None:
+def write_error_analysis(agg: dict[str, Any], records: list[dict[str, Any]]) -> Path:
     o = agg["overall"]
     failures = [r for r in records if not r["success"]]
     lines = [
@@ -106,6 +107,7 @@ def append_error_analysis(agg: dict[str, Any], records: list[dict[str, Any]]) ->
             lines.append(f"- `{r['id']}` [{r['failure_category']}] {notes}")
     lines.append("")
 
-    path = REPO_ROOT / "ERROR_ANALYSIS.md"
-    with path.open("a", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    path = REPO_ROOT / "eval_results" / "error-analysis.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Error analysis, latest run\n" + "\n".join(lines), encoding="utf-8")
+    return path

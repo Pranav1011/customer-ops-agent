@@ -168,7 +168,8 @@ def _refund_policy(args: dict[str, Any]) -> PolicyDecision:
     if amount > settings.refund_approval_threshold:
         return _escalate(
             "refund_over_threshold",
-            f"refund {amount} exceeds the ${settings.refund_approval_threshold:.0f} auto-approval threshold",
+            f"refund of ${amount:.2f} needs human approval: over the "
+            f"${settings.refund_approval_threshold:.0f} auto-approval threshold",
         )
     return _allow("refund_within_policy", f"refund {amount} within policy")
 
@@ -180,7 +181,8 @@ def _credit_policy(args: dict[str, Any], direct_limit: float) -> PolicyDecision:
     if amount > direct_limit:
         return _escalate(
             "credit_over_limit",
-            f"goodwill credit {amount} exceeds the ${direct_limit:.0f} direct-apply limit",
+            f"goodwill credit of ${amount:.2f} needs human approval: over the "
+            f"${direct_limit:.0f} direct-apply limit",
         )
     return _allow("credit_within_limit", f"credit {amount} within direct-apply limit")
 

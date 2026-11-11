@@ -100,8 +100,9 @@ both, and the loop now terminates in ~2 steps.
 
 ## Runs
 
-_`make eval` appends a dated section below per run with per-category counts and
-per-tag safety/success numbers._
+_Earlier versions of `make eval` appended the dated sections below. It now writes
+the same section for the latest run to `eval_results/error-analysis.md` (not
+committed), so running the eval never edits this file._
 
 
 ## Run 2026-08-24 22:39 UTC — provider=mock

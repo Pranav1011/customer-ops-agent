@@ -35,6 +35,7 @@ class AgentState(TypedDict, total=False):
     scratchpad: list[dict[str, Any]]  # [{tool, args, result}]
     call_sigs: list[str]  # signatures of executed tool calls, for loop detection
     blocked_writes: list[str]  # write tools the policy engine blocked on this ticket
+    done_writes: list[str]  # signatures of write calls that succeeded in this run
     iterations: int
     identity_verified: bool | None
 
@@ -74,6 +75,7 @@ def new_state(
         scratchpad=[],
         call_sigs=[],
         blocked_writes=[],
+        done_writes=[],
         iterations=0,
         identity_verified=None,
         done=False,
