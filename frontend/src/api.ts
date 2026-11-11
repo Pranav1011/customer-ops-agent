@@ -36,6 +36,17 @@ export class NetworkError extends Error {
   }
 }
 
+/** The API answered with an error status; `message` is its `detail` when it sent one. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -49,7 +60,13 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
   }
   // Any HTTP response, error statuses included, means the API is up.
   setReachability("online");
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${path}`);
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((b: { detail?: unknown }) => (typeof b.detail === "string" ? b.detail : null))
+      .catch(() => null);
+    throw new HttpError(res.status, detail ?? `${res.status} ${res.statusText} — ${path}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -83,7 +100,12 @@ export const api = {
   queue: (limit = 100) => j<{ count: number; tickets: QueueTicket[] }>(`/queue?limit=${limit}`),
   trace: (runId: string) => j<Trace>(`/trace/${runId}`),
   escalations: () => j<{ count: number; escalations: Escalation[] }>("/escalations"),
-  resolveEscalation: (id: number) => j<Escalation>(`/escalations/${id}/resolve`, { method: "POST" }),
+  resolveEscalation: (id: number, note: string, token: string) =>
+    j<Escalation>(`/escalations/${id}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+      headers: token ? { "X-Operator-Token": token } : {},
+    }),
   metrics: () => j<Record<string, unknown>>("/metrics"),
   // Submit + re-run go through the async job queue (non-blocking) and poll to completion.
   submit: async (payload: { body: string; customer_id?: string; order_id?: string; subject?: string }) => {

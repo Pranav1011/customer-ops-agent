@@ -79,6 +79,16 @@ export default function App() {
 
   const selected = tickets.find((t) => t.ticket_id === selectedId) ?? null;
 
+  // "← Queue" unmounts the focused button on narrow screens; put focus back on
+  // the row the person came from.
+  const returnTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedId != null || returnTo.current == null) return;
+    const id = returnTo.current;
+    returnTo.current = null;
+    document.querySelector<HTMLElement>(`.row[data-ticket-id="${CSS.escape(id)}"]`)?.focus();
+  }, [selectedId]);
+
   const resolvedCount = tickets.filter((t) => t.resolution_status === "resolved").length;
 
   const openTicket = (ticketId: string) => {
@@ -162,6 +172,7 @@ export default function App() {
                     key={t.ticket_id}
                     className="row"
                     data-active={t.ticket_id === selectedId}
+                    data-ticket-id={t.ticket_id}
                     style={{ animationDelay: `${Math.min(i * 18, 260)}ms` }}
                     aria-current={t.ticket_id === selectedId ? "true" : undefined}
                     onClick={() => setSelectedId(t.ticket_id)}
@@ -183,7 +194,13 @@ export default function App() {
               {selected ? (
                 <>
                   <div className="back-bar">
-                    <button className="btn ghost" onClick={() => setSelectedId(null)}>
+                    <button
+                      className="btn ghost"
+                      onClick={() => {
+                        returnTo.current = selectedId;
+                        setSelectedId(null);
+                      }}
+                    >
                       ← Queue
                     </button>
                   </div>

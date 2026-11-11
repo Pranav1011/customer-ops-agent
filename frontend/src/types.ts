@@ -45,6 +45,8 @@ export interface TraceEvent {
   entries_compacted?: number;
   order_id?: string | null;
   entry?: unknown;
+  resolved_by?: string;
+  note?: string;
 }
 
 export interface PlanStep {
@@ -84,4 +86,7 @@ export interface Escalation {
   context: Record<string, unknown>;
   status: string;
   created_at: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  note: string | null;
 }

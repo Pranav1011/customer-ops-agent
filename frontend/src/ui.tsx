@@ -75,6 +75,8 @@ export function viewEvent(ev: TraceEvent): EventView {
     }
     case "escalation":
       return { tone: C.warn, kind: "escalate", title: "routed to human", note: ev.reason ?? undefined };
+    case "human_resolved":
+      return { tone: C.ok, kind: "human", title: `escalation closed by ${ev.resolved_by ?? "operator"}`, note: ev.note };
     case "reply":
       return { tone: ev.status === "resolved" ? C.ok : C.warn, kind: "resolve", title: ev.status ?? "reply" };
     default:
