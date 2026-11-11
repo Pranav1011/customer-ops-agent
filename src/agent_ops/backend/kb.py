@@ -11,8 +11,14 @@ from functools import lru_cache
 from typing import Any
 
 import chromadb
+import onnxruntime
 
 from agent_ops.config import get_settings
+
+# The embeddings run on ONNX Runtime, whose telemetry uploader runs on its own
+# native thread. An upload still in flight when the process exits aborts it
+# (libc++ recursive_mutex error during teardown), and nothing here needs it.
+onnxruntime.disable_telemetry_events()
 
 _COLLECTION = "aurora_kb"
 
