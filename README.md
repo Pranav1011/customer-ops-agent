@@ -23,7 +23,7 @@ runs**, because the guardrails, not the model, decide what gets written.
 **Status:** complete end to end — mock backend → agent loop → real actions + guardrails →
 memory → eval harness → **three swappable brains** (deterministic mock, a real **local LLM
 via Ollama**, or Claude) → MCP server → React console. Runs fully offline and free.
-169 tests (`make test`).
+173 tests (`make test`).
 
 ---
 
@@ -188,8 +188,11 @@ What to try first:
   escalates, or (for the prompt-injection sample) it answers the real question and
   refuses the embedded $500 refund. The subject is optional; without one, the ticket
   takes the message's first sentence.
-- **Escalations.** Each escalation links to its ticket's trace, and **Mark handled**
-  closes it (`POST /escalations/{id}/resolve`).
+- **Escalations.** Each escalation links to its ticket's trace. **Mark handled** asks
+  for a note and the operator token, then closes it (`POST /escalations/{id}/resolve`
+  with an `X-Operator-Token` header). Closing is off until the API starts with a token:
+  `AURORA_OPERATOR_TOKEN=<any secret you pick> make dev`. The note, who closed it and
+  when are stored, and the ticket's trace gets a "closed by" event.
 
 The console works with the keyboard (tabs follow the WAI-ARIA pattern) and at phone
 width, where the queue and the trace show one at a time. It is dark-only.
@@ -217,6 +220,7 @@ sensible defaults, so `.env` is optional. Recognized variables:
 | `WORKER_CONCURRENCY` | `2` | max tickets resolved in parallel by the async worker pool |
 | `QUEUE_BACKEND` | `thread` | `thread` (in-process pool) or `redis` (durable RQ queue) |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis for `QUEUE_BACKEND=redis` |
+| `AURORA_OPERATOR_TOKEN` | unset | token a person sends to close an escalation; unset disables closing |
 
 ## Architecture
 
@@ -256,7 +260,7 @@ sensible defaults, so `.env` is optional. Recognized variables:
 | Where | Guard | What it does |
 |---|---|---|
 | intake | injection scan | Strips injected instructions; the ticket is flagged |
-| act | loop breaker | An identical call or a third call to one tool escalates; repeating a write that already succeeded ends the run as done |
+| act | loop breaker | An identical call or a third call to one tool escalates; a repeat of a write that already succeeded is not run and is listed in the escalation for a person |
 | act | `injection_no_autonomous_writes` | A flagged ticket takes no refund, credit or cancellation on its own |
 | act | `blocked_write_retry` | Retrying a write the policy blocked escalates |
 | act | confidence gate | A low-confidence write escalates |
@@ -265,7 +269,7 @@ sensible defaults, so `.env` is optional. Recognized variables:
 | resolve | grounding | A reply citing an order id no tool returned is replaced and escalated |
 | resolve | reply scope | A reply naming another customer's order, id or email is replaced |
 | resolve | action claims | A reply that claims a refund, cancellation, address change or credit this run did not make is replaced |
-| resolve | completed writes | An escalated reply lists every write the run already made, such as a refund before a loop break |
+| resolve | completed writes | An escalated reply lists every write already made on the account, such as a refund before a loop break; the final text is re-checked for scope and action claims |
 
 **Runtime, measured, planned.** Everything above runs today. The eval harness, the model
 comparison and the concurrency benchmark are offline measurements (`make eval`,
@@ -282,7 +286,11 @@ docker compose up --build     # API + RQ worker + Redis at http://localhost:8000
 ## Design decisions and limitations
 
 - **No authentication, on the API or over MCP.** This is a known demo limitation. Any
-  caller can submit a ticket as any `customer_id`, re-run tickets and close escalations.
+  caller can submit a ticket as any `customer_id` and re-run tickets. The one exception
+  is closing an escalation, which can wave through a pending over-limit refund: it needs
+  the shared `AURORA_OPERATOR_TOKEN` and a note, and is disabled when no token is set.
+  The token is one shared secret, not per-person accounts; `resolved_by` is what the
+  operator types.
   An MCP client names the customer it acts for and nothing checks that claim, so over MCP
   any order can take a refund up to the $100 auto-approval limit. Run it on localhost
   only; CORS allows localhost origins only.

@@ -115,7 +115,8 @@ model-comparison harness and the "safety decoupled from model quality" result po
    scope, cancellation) *before* execution, at a single choke point (and re-checked inside
    each tool).
 3. **The loop** — max-iteration cap, per-task cost ceiling, a repeated-call loop-breaker
-   (a repeat of a write that already succeeded ends the run as done), no autonomous writes
+   (a repeat of a write that already succeeded is not run and is listed for the person who
+   picks up the escalation), no autonomous writes
    on an injection-flagged ticket, and no retrying a write the policy blocked.
 4. **Output** — reply grounding (no un-sourced order ids), reply scope (no other
    customer's records), and action claims (no "we refunded you" without a successful
