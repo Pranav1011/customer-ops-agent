@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, useReachability } from "./api";
 import { Escalations } from "./components/Escalations";
 import { EMPTY_DRAFT, TicketComposer, type Draft } from "./components/TicketComposer";
@@ -7,6 +7,7 @@ import type { Escalation, QueueTicket } from "./types";
 import { StatusChip } from "./ui";
 
 type Tab = "queue" | "escalations";
+const TABS: Tab[] = ["queue", "escalations"];
 
 const RECONNECT_MS = 3000;
 const HEARTBEAT_MS = 5000;
@@ -80,13 +81,18 @@ export default function App() {
 
   const resolvedCount = tickets.filter((t) => t.resolution_status === "resolved").length;
 
+  const openTicket = (ticketId: string) => {
+    setSelectedId(ticketId);
+    setTab("queue");
+  };
+
   if (offline && !syncedAt) {
     return (
       <div className="app">
-        <Topbar provider="offline" resolved={0} open={0} escalations={0} tab={tab} setTab={setTab} offline />
+        <Topbar provider="offline" counts={null} escalations={0} tab={tab} setTab={setTab} offline />
         <div className="main">
           <div className="empty">
-            <div className="glyph">!</div>
+            <div className="glyph" aria-hidden="true">!</div>
             <h3>API not reachable</h3>
             <p>
               Start the backend with <code style={{ fontFamily: "var(--font-mono)" }}>make dev</code> (it serves{" "}
@@ -105,8 +111,7 @@ export default function App() {
     <div className="app" data-offline={offline}>
       <Topbar
         provider={offline ? "offline" : provider}
-        resolved={resolvedCount}
-        open={tickets.length}
+        counts={{ resolved: resolvedCount, total: tickets.length }}
         escalations={escalations.length}
         tab={tab}
         setTab={setTab}
@@ -124,15 +129,20 @@ export default function App() {
           </button>
         </div>
       )}
-      <div className="main" data-stale={offline}>
+      <div className="main" data-stale={offline} role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "queue" ? (
-          <div className="split">
+          <div className="split" data-detail-open={selected != null}>
             <div className="col list">
               <div className="col-head">
                 <h2>Queue</h2>
                 <span className="count">{tickets.length}</span>
                 <div className="spacer" />
-                <button className="btn ghost" onClick={() => setComposerOpen((o) => !o)}>
+                <button
+                  className="btn ghost"
+                  aria-expanded={composerOpen}
+                  aria-controls="composer"
+                  onClick={() => setComposerOpen((o) => !o)}
+                >
                   {composerOpen ? "Close" : "New ticket"}
                 </button>
               </div>
@@ -153,9 +163,10 @@ export default function App() {
                     className="row"
                     data-active={t.ticket_id === selectedId}
                     style={{ animationDelay: `${Math.min(i * 18, 260)}ms` }}
+                    aria-current={t.ticket_id === selectedId ? "true" : undefined}
                     onClick={() => setSelectedId(t.ticket_id)}
                   >
-                    <span className="subject">{t.subject || "(no subject)"}</span>
+                    <span className="subject">{t.subject || t.intent || "Untitled ticket"}</span>
                     <span className="chip-wrap">
                       <StatusChip status={t.resolution_status ?? t.status} />
                     </span>
@@ -170,17 +181,24 @@ export default function App() {
             </div>
             <div className="col detail">
               {selected ? (
-                <TraceViewer
-                  key={selected.ticket_id}
-                  ticket={selected}
-                  onChanged={() => {
-                    refreshQueue();
-                    refreshEscalations();
-                  }}
-                />
+                <>
+                  <div className="back-bar">
+                    <button className="btn ghost" onClick={() => setSelectedId(null)}>
+                      ← Queue
+                    </button>
+                  </div>
+                  <TraceViewer
+                    key={selected.ticket_id}
+                    ticket={selected}
+                    onChanged={() => {
+                      refreshQueue();
+                      refreshEscalations();
+                    }}
+                  />
+                </>
               ) : (
                 <div className="empty">
-                  <div className="glyph">◇</div>
+                  <div className="glyph" aria-hidden="true">◇</div>
                   <h3>Select a ticket</h3>
                   <p>
                     Pick a ticket to replay the agent's run — its plan, every tool call and guardrail decision, and the
@@ -192,7 +210,7 @@ export default function App() {
           </div>
         ) : (
           <div className="col detail" style={{ height: "100%" }}>
-            <Escalations items={escalations} />
+            <Escalations items={escalations} onResolved={refreshEscalations} onOpenTicket={openTicket} />
           </div>
         )}
       </div>
@@ -202,21 +220,29 @@ export default function App() {
 
 function Topbar({
   provider,
-  resolved,
-  open,
+  counts,
   escalations,
   tab,
   setTab,
   offline = false,
 }: {
   provider: string;
-  resolved: number;
-  open: number;
+  counts: { resolved: number; total: number } | null;
   escalations: number;
   tab: Tab;
   setTab: (t: Tab) => void;
   offline?: boolean;
 }) {
+  // Arrow keys move between tabs (WAI-ARIA tabs pattern); Tab leaves the list.
+  function onTabKey(e: KeyboardEvent<HTMLDivElement>) {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = TABS[(TABS.indexOf(tab) + step + TABS.length) % TABS.length];
+    setTab(next);
+    document.getElementById(`tab-${next}`)?.focus();
+  }
+
   return (
     <header className="topbar">
       <div className="brand">
@@ -225,19 +251,29 @@ function Topbar({
         </span>
         <span className="sub">Operations Console</span>
       </div>
-      <div className="tabs" role="tablist">
-        <button role="tab" data-active={tab === "queue"} onClick={() => setTab("queue")}>
-          Queue
-        </button>
-        <button role="tab" data-active={tab === "escalations"} onClick={() => setTab("escalations")}>
-          Escalations{escalations ? ` · ${escalations}` : ""}
-        </button>
+      <div className="tabs" role="tablist" aria-label="Console views" onKeyDown={onTabKey}>
+        {TABS.map((t) => (
+          <button
+            key={t}
+            role="tab"
+            id={`tab-${t}`}
+            aria-selected={tab === t}
+            aria-controls={`panel-${t}`}
+            tabIndex={tab === t ? 0 : -1}
+            data-active={tab === t}
+            onClick={() => setTab(t)}
+          >
+            {t === "queue" ? "Queue" : `Escalations${escalations ? ` · ${escalations}` : ""}`}
+          </button>
+        ))}
       </div>
       <div className="spacer" />
       <div className="meta">
-        <span>
-          {resolved}/{open} resolved
-        </span>
+        {counts && (
+          <span>
+            {counts.resolved} of {counts.total} resolved
+          </span>
+        )}
         <span className="pill" data-offline={offline}>
           <span className="dot" style={{ display: "inline-block", marginRight: 6 }} />
           reasoner: {provider || "…"}

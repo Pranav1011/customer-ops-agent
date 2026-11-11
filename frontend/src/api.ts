@@ -83,6 +83,7 @@ export const api = {
   queue: (limit = 100) => j<{ count: number; tickets: QueueTicket[] }>(`/queue?limit=${limit}`),
   trace: (runId: string) => j<Trace>(`/trace/${runId}`),
   escalations: () => j<{ count: number; escalations: Escalation[] }>("/escalations"),
+  resolveEscalation: (id: number) => j<Escalation>(`/escalations/${id}/resolve`, { method: "POST" }),
   metrics: () => j<Record<string, unknown>>("/metrics"),
   // Submit + re-run go through the async job queue (non-blocking) and poll to completion.
   submit: async (payload: { body: string; customer_id?: string; order_id?: string; subject?: string }) => {
