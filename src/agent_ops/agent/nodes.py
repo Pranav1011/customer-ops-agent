@@ -226,21 +226,14 @@ def act(state: AgentState, config: RunnableConfig) -> AgentState:
     # Guardrail: runaway-loop breaker. A real (esp. small) model can get stuck
     # re-calling the same tool without making progress. If it repeats an
     # identical call, or calls the same tool a 3rd time, stop and escalate.
-    # Repeating a write that already succeeded with the same arguments is the
-    # exception: the work is done, so the run finishes instead of escalating.
+    # A repeat of a write that already succeeded is not run again, and it is
+    # recorded so the person picking up the escalation sees what was dropped:
+    # two identical refunds can be a loop or two real items, and only a person
+    # can tell which.
     sig = tool + ":" + json.dumps(decision.args, sort_keys=True, default=str)
     sigs = state.setdefault("call_sigs", [])
     if sig in state.get("done_writes", []):
-        _event(
-            state,
-            "guard",
-            decision="repeat_of_done_write",
-            tool=tool,
-            reason=f"'{tool}' already succeeded with these arguments; not repeated",
-        )
-        state["done"] = True
-        state["stop_reason"] = "finish"
-        return state
+        state.setdefault("dropped_repeats", []).append({"tool": tool, "args": decision.args})
     same_tool = sum(1 for s in sigs if s.split(":", 1)[0] == tool)
     if sig in sigs or same_tool >= 2:
         _event(
@@ -484,10 +477,29 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
     # An escalated reply is a hand-off note, so it would not mention a write
     # this run already made (say a refund before a loop break). State each one,
     # from the tool results, so the customer is not told less than happened.
+    # The final reply goes through the scope and action-claim checks again; if
+    # it fails either, the line is left off.
     if escalated:
         done = completed_actions(state.get("scratchpad", []))
         if done:
-            reply = f"{reply} Already done on your account: {'; '.join(done)}."
+            final = (
+                f"{reply} Already done on your account: {'; '.join(done)}. "
+                "A specialist will follow up on the rest."
+            )
+            failed = reply_scope_violations(final, state.get("customer_id")) or (
+                unbacked_action_claims(
+                    final, state.get("actions_taken", []), state.get("scratchpad", [])
+                )
+            )
+            if failed:
+                _event(
+                    state,
+                    "guard",
+                    decision="completed_actions_dropped",
+                    reason=f"completed-actions line failed the reply checks: {failed}",
+                )
+            else:
+                reply = final
 
     status = "escalated" if escalated else "resolved"
     resolution = Resolution(
@@ -520,7 +532,11 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
 
 
 def completed_actions(scratchpad: list[dict[str, Any]]) -> list[str]:
-    """Plain-language lines for the writes that succeeded, in the order they ran."""
+    """Plain-language lines for the writes that succeeded, in the order they ran.
+
+    An idempotent replay (a write an earlier run on this ticket already made) is
+    included: the reply words these lines as what is done on the account, which
+    stays true whichever run made the write."""
     lines: list[str] = []
     for entry in scratchpad:
         result = entry.get("result") or {}
@@ -546,6 +562,13 @@ def completed_actions(scratchpad: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _escalation_context(state: AgentState) -> dict[str, Any]:
+    context: dict[str, Any] = {"intent": state.get("intent"), "request": state.get("request_text")}
+    if state.get("dropped_repeats"):
+        context["dropped_repeats"] = state["dropped_repeats"]
+    return context
+
+
 def _persist(state: AgentState, status: str, reply: str) -> None:
     with session_scope() as s:
         if state.get("ticket_id"):
@@ -562,5 +585,5 @@ def _persist(state: AgentState, status: str, reply: str) -> None:
                 customer_id=state.get("customer_id"),
                 run_id=state["run_id"],
                 reason=state.get("escalation_reason") or "escalated",
-                context={"intent": state.get("intent"), "request": state.get("request_text")},
+                context=_escalation_context(state),
             )

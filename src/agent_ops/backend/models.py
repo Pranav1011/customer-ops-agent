@@ -128,6 +128,9 @@ class Escalation(SQLModel, table=True):
     context: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = "open"  # open | resolved
     created_at: datetime = Field(default_factory=_utcnow)
+    resolved_by: str | None = None
+    resolved_at: datetime | None = None
+    note: str | None = None  # the operator's note on closing
 
 
 class Job(SQLModel, table=True):

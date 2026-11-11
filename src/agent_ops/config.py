@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     queue_backend: str = Field(default="thread")  # "thread" | "redis"
     redis_url: str = Field(default="redis://localhost:6379/0")
 
+    # --- Operator actions ---
+    # Shared token a person sends (X-Operator-Token) to close an escalation. Unset
+    # means closing escalations is disabled; there is no other auth in the demo.
+    aurora_operator_token: str = Field(default="")
+
     def _resolve(self, p: str) -> Path:
         path = Path(p)
         return path if path.is_absolute() else REPO_ROOT / path

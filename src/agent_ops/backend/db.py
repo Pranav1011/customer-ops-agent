@@ -36,11 +36,29 @@ def get_engine() -> Engine:
     return _engine
 
 
+# Columns added after the first release. create_all() only creates missing
+# tables, so a database seeded by an older version gets these added in place.
+_ADDED_COLUMNS = {
+    "escalation": {
+        "resolved_by": "VARCHAR",
+        "resolved_at": "DATETIME",
+        "note": "VARCHAR",
+    },
+}
+
+
 def init_db() -> None:
     """Create all tables. Import models so they register on the metadata."""
     import agent_ops.backend.models  # noqa: F401
 
-    SQLModel.metadata.create_all(get_engine())
+    engine = get_engine()
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        for table, columns in _ADDED_COLUMNS.items():
+            have = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for name, sql_type in columns.items():
+                if name not in have:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
 
 
 @contextmanager

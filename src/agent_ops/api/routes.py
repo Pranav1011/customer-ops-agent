@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import re
 import uuid
@@ -9,14 +10,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import update
 from sqlmodel import select
 
 from agent_ops.agent.graph import run_ticket
 from agent_ops.api import worker
 from agent_ops.backend.db import session_scope
 from agent_ops.backend.models import ActionLog, Escalation, Job, Ticket, TraceRecord
+from agent_ops.config import get_settings
+from agent_ops.tracing.trace import append_trace_event
 
 router = APIRouter()
 
@@ -298,19 +302,63 @@ def list_escalations(status: str = "open", limit: int = 50) -> dict[str, Any]:
         return {"count": len(rows), "escalations": [_escalation_view(e) for e in rows]}
 
 
+class ResolveEscalation(BaseModel):
+    note: str = Field(min_length=3, max_length=500, description="What the operator did")
+    resolved_by: str = Field(default="operator", min_length=1, max_length=60)
+
+
+def _require_operator(token: str | None) -> None:
+    """Closing an escalation can wave through a pending over-threshold refund, so
+    it needs the operator token. With none configured the action is disabled."""
+    expected = get_settings().aurora_operator_token
+    if not expected:
+        raise HTTPException(
+            403,
+            "closing escalations is disabled: start the API with AURORA_OPERATOR_TOKEN "
+            "set, then send that value in the X-Operator-Token header",
+        )
+    if not token or not hmac.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(401, "missing or wrong X-Operator-Token")
+
+
 @router.post("/escalations/{escalation_id}/resolve")
-def resolve_escalation(escalation_id: int) -> dict[str, Any]:
-    """A human closes an escalation once they have handled the ticket."""
+def resolve_escalation(
+    escalation_id: int,
+    payload: ResolveEscalation,
+    x_operator_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """A person closes an escalation once they have handled the ticket. The note,
+    who closed it and when are stored, and the run's trace records the close."""
+    _require_operator(x_operator_token)
     with session_scope() as s:
+        # One conditional UPDATE, so of two concurrent closes exactly one wins.
+        closed = s.execute(
+            update(Escalation)
+            .where(Escalation.id == escalation_id, Escalation.status == "open")
+            .values(
+                status="resolved",
+                resolved_by=payload.resolved_by.strip(),
+                resolved_at=datetime.now(UTC),
+                note=payload.note.strip(),
+            )
+        ).rowcount
         e = s.get(Escalation, escalation_id)
         if e is None:
             raise HTTPException(404, f"escalation not found: {escalation_id}")
-        if e.status != "open":
+        if closed != 1:
             raise HTTPException(409, f"escalation {escalation_id} is already {e.status}")
-        e.status = "resolved"
-        s.add(e)
-        s.flush()
-        return _escalation_view(e)
+        view = _escalation_view(e)
+        trace = s.get(TraceRecord, e.run_id) if e.run_id else None
+        trace_path = Path(trace.path) if trace is not None else None
+    if trace_path is not None:
+        append_trace_event(
+            trace_path,
+            "human_resolved",
+            escalation_id=escalation_id,
+            resolved_by=view["resolved_by"],
+            note=view["note"],
+        )
+    return view
 
 
 def _escalation_view(e: Escalation) -> dict[str, Any]:
@@ -323,4 +371,7 @@ def _escalation_view(e: Escalation) -> dict[str, Any]:
         "context": e.context,
         "status": e.status,
         "created_at": _iso_utc(e.created_at),
+        "resolved_by": e.resolved_by,
+        "resolved_at": _iso_utc(e.resolved_at) if e.resolved_at else None,
+        "note": e.note,
     }

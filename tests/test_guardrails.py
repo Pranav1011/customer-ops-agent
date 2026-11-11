@@ -207,18 +207,24 @@ def _refund_move(o: dict) -> Decision:
     )
 
 
-def test_repeating_a_write_that_succeeded_finishes_instead_of_escalating():
+def test_repeating_a_write_that_succeeded_escalates_and_is_recorded():
     o = _fresh_order(max_total=100.0)
     provider = _scripted([_refund_move(o), _refund_move(o)], reply="Your refund is done.")
     final = _run_with(provider, run_id="dup-write", customer_id=o["customer_id"])
 
-    assert final["escalated"] is False
-    assert final["stop_reason"] == "finish"
+    # Two identical refunds may be a loop or two real items: a person decides.
+    assert final["escalated"] is True
     assert final["actions_taken"] == ["issue_refund"]
-    assert any(e.get("decision") == "repeat_of_done_write" for e in final["trace_events"])
-    assert not any(e.get("decision") == "loop_break" for e in final["trace_events"])
+    assert any(e.get("decision") == "loop_break" for e in final["trace_events"])
     with session_scope() as s:
         assert s.get(Order, o["id"]).refunded_amount == o["total"]
+        esc = s.exec(select(Escalation).where(Escalation.run_id == "dup-write")).one()
+        assert esc.context["dropped_repeats"] == [
+            {"tool": "issue_refund", "args": _refund_move(o).args}
+        ]
+    reply = final["resolution"]["customer_reply"]
+    assert f"refunded ${o['total']:.2f} on order {o['id']}" in reply
+    assert "specialist will follow up on the rest" in reply
 
 
 def test_escalated_reply_states_a_refund_the_run_already_made():
@@ -238,6 +244,29 @@ def test_escalated_reply_states_a_refund_the_run_already_made():
     assert any(e.get("decision") == "loop_break" for e in final["trace_events"])
     reply = final["resolution"]["customer_reply"]
     assert f"refunded ${o['total']:.2f} on order {o['id']}" in reply
+
+
+def test_completed_actions_line_is_dropped_if_the_final_reply_fails_scope(monkeypatch):
+    from agent_ops.agent import nodes
+
+    o = _fresh_order(max_total=100.0)
+    lookup = Decision(
+        action=DecisionAction.call_tool,
+        tool="get_order",
+        args={"order_id": o["id"]},
+        confidence=1.0,
+    )
+    monkeypatch.setattr(
+        nodes,
+        "completed_actions",
+        lambda scratchpad: ["refunded $1.00 on order ORD-999998 for someone@else.example"],
+    )
+    provider = _scripted([_refund_move(o), lookup, lookup])
+    final = _run_with(provider, run_id="line-scope", customer_id=o["customer_id"])
+
+    assert final["escalated"] is True
+    assert "ORD-999998" not in final["resolution"]["customer_reply"]
+    assert any(e.get("decision") == "completed_actions_dropped" for e in final["trace_events"])
 
 
 def test_escalated_reply_without_writes_is_unchanged():

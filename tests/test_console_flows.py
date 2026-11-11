@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
@@ -60,25 +61,108 @@ def test_demo_tickets_show_actions_and_human_handoffs():
     }
 
 
-def test_human_resolves_an_escalation():
-    r = run_ticket(
-        "Please cancel my subscription.", ticket_id="TCK-ESC-CLOSE", customer_id="CUST-00002"
-    )
+@pytest.fixture
+def operator_token(monkeypatch):
+    from agent_ops.config import get_settings
+
+    monkeypatch.setenv("AURORA_OPERATOR_TOKEN", "test-operator-token")
+    get_settings.cache_clear()
+    yield "test-operator-token"
+    monkeypatch.delenv("AURORA_OPERATOR_TOKEN")
+    get_settings.cache_clear()
+
+
+def _escalate(ticket_id: str) -> tuple[int, str]:
+    r = run_ticket("Please cancel my subscription.", ticket_id=ticket_id, customer_id="CUST-00002")
     assert r["escalated"]
     with session_scope() as s:
-        esc_id = s.exec(select(Escalation.id).where(Escalation.ticket_id == "TCK-ESC-CLOSE")).one()
+        esc_id = s.exec(select(Escalation.id).where(Escalation.ticket_id == ticket_id)).one()
+    return esc_id, r["run_id"]
+
+
+def test_closing_an_escalation_is_disabled_without_an_operator_token():
+    esc_id, _ = _escalate("TCK-ESC-NOTOKEN")
     with TestClient(app) as c:
+        r = c.post(f"/escalations/{esc_id}/resolve", json={"note": "refunded by hand"})
+        assert r.status_code == 403
+        assert "AURORA_OPERATOR_TOKEN" in r.json()["detail"]
         open_ids = [e["id"] for e in c.get("/escalations").json()["escalations"]]
         assert esc_id in open_ids
 
-        done = c.post(f"/escalations/{esc_id}/resolve")
-        assert done.status_code == 200 and done.json()["status"] == "resolved"
-        assert done.json()["ticket_id"] == "TCK-ESC-CLOSE"
+
+def test_operator_closes_an_escalation_with_a_note(operator_token):
+    esc_id, run_id = _escalate("TCK-ESC-CLOSE")
+    url = f"/escalations/{esc_id}/resolve"
+    good = {"X-Operator-Token": operator_token}
+    with TestClient(app) as c:
+        assert (
+            c.post(url, json={"note": "done"}, headers={"X-Operator-Token": "nope"}).status_code
+            == 401
+        )
+        assert c.post(url, json={"note": "done"}).status_code == 401
+        assert c.post(url, json={}, headers=good).status_code == 422
+
+        done = c.post(
+            url, json={"note": "Cancelled after a call", "resolved_by": "sam"}, headers=good
+        )
+        assert done.status_code == 200
+        body = done.json()
+        assert body["status"] == "resolved" and body["ticket_id"] == "TCK-ESC-CLOSE"
+        assert body["note"] == "Cancelled after a call" and body["resolved_by"] == "sam"
+        assert body["resolved_at"]
 
         open_ids = [e["id"] for e in c.get("/escalations").json()["escalations"]]
         assert esc_id not in open_ids
-        assert c.post(f"/escalations/{esc_id}/resolve").status_code == 409
-        assert c.post("/escalations/999999/resolve").status_code == 404
+        assert c.post(url, json={"note": "again"}, headers=good).status_code == 409
+        assert (
+            c.post("/escalations/999999/resolve", json={"note": "x y z"}, headers=good).status_code
+            == 404
+        )
+
+        events = c.get(f"/trace/{run_id}").json()["events"]
+        assert events[-1]["type"] == "human_resolved"
+        assert events[-1]["note"] == "Cancelled after a call"
+
+
+def test_concurrent_closes_have_one_winner(operator_token):
+    from concurrent.futures import ThreadPoolExecutor
+
+    esc_id, _ = _escalate("TCK-ESC-RACE")
+    with TestClient(app) as c:
+
+        def close(i: int) -> int:
+            return c.post(
+                f"/escalations/{esc_id}/resolve",
+                json={"note": f"closed by worker {i}"},
+                headers={"X-Operator-Token": operator_token},
+            ).status_code
+
+        with ThreadPoolExecutor(8) as pool:
+            codes = sorted(pool.map(close, range(8)))
+    assert codes == [200] + [409] * 7
+
+
+def test_init_db_adds_escalation_columns_to_an_older_database(tmp_path):
+    import sqlalchemy
+
+    import agent_ops.backend.db as db
+
+    engine = sqlalchemy.create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE escalation (id INTEGER PRIMARY KEY, ticket_id VARCHAR, "
+            "customer_id VARCHAR, run_id VARCHAR, reason VARCHAR, context JSON, "
+            "status VARCHAR, created_at DATETIME)"
+        )
+    saved = db._engine
+    db._engine = engine
+    try:
+        db.init_db()
+        with engine.begin() as conn:
+            cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(escalation)")}
+    finally:
+        db._engine = saved
+    assert {"resolved_by", "resolved_at", "note"} <= cols
 
 
 def test_kb_import_leaves_no_stray_telemetry_file(tmp_path):

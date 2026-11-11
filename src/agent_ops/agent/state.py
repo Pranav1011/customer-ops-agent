@@ -36,6 +36,7 @@ class AgentState(TypedDict, total=False):
     call_sigs: list[str]  # signatures of executed tool calls, for loop detection
     blocked_writes: list[str]  # write tools the policy engine blocked on this ticket
     done_writes: list[str]  # signatures of write calls that succeeded in this run
+    dropped_repeats: list[dict[str, Any]]  # repeats of a succeeded write, not run again
     iterations: int
     identity_verified: bool | None
 
@@ -76,6 +77,7 @@ def new_state(
         call_sigs=[],
         blocked_writes=[],
         done_writes=[],
+        dropped_repeats=[],
         iterations=0,
         identity_verified=None,
         done=False,

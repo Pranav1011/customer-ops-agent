@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from agent_ops.backend.db import session_scope
@@ -74,3 +75,16 @@ def write_trace(state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         rec.summary = summary
 
     return str(path), summary
+
+
+def append_trace_event(path: Path, etype: str, **payload: Any) -> None:
+    """Add an event that happened after the run (a person closing its escalation)
+    to the end of a saved trace. A missing trace file is left alone."""
+    if not path.exists():
+        return
+    trace = json.loads(path.read_text(encoding="utf-8"))
+    events = trace.setdefault("events", [])
+    events.append(
+        {"seq": len(events), "type": etype, "ts": datetime.now(UTC).isoformat(), **payload}
+    )
+    path.write_text(json.dumps(trace, indent=2, default=str), encoding="utf-8")
