@@ -70,18 +70,20 @@ refundable remaining. Confidence < 0.6 on a write escalates.
 to unit-test exhaustively (tests/test_policy.py), and keeps the safety logic auditable in
 one place. Escalation is modeled as a *successful* outcome, not a failure.
 
-### D9 — Eval scenarios are self-contained; the judge is validated; injection is sanitized
+### D9 — Eval scenarios are self-contained; the judge has a validation study; injection is sanitized
 **Chose:** (a) Each golden scenario declares its own backend fixtures, so the harness
 resets to a known state per scenario and expected final state is exactly checkable —
 rather than depending on random-seed picks. (b) The LLM-as-judge is measured, not trusted:
 a pairwise position-consistency study, repetition-stability, and human-agreement on a
-hand-labeled subset (per Shi et al. 2406.07791). (c) A prompt-injection scanner sanitizes
+hand-labeled subset (per Shi et al. 2406.07791). On the offline mock brain the judge is
+a keyword heuristic, so the study's 100% there shows the study runs, not that a model
+judge is reliable; the study is meant for the Claude judge. (c) A prompt-injection scanner sanitizes
 untrusted ticket text before classification (strips embedded "SYSTEM:"/"ignore previous"
 instructions), so injected commands can't steer the agent.
 **Rejected:** Depending on the shared seed for expected outcomes; a bare judge with no
 reliability check; relying on the model alone to resist injection.
-**Why:** Determinism makes the harness reproducible and CI-gateable; a validated judge is
-far more credible; and input sanitization is a concrete, testable OWASP-LLM defense. The
+**Why:** Determinism makes the harness reproducible and CI-gateable; a judge with a
+reliability check is far more credible than a bare one; and input sanitization is a concrete, testable OWASP-LLM defense. The
 first full run caught a real classifier mis-route (logged in ERROR_ANALYSIS.md) — evidence
 the harness earns its keep.
 
