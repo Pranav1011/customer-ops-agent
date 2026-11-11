@@ -171,7 +171,7 @@ def _refund_policy(args: dict[str, Any]) -> PolicyDecision:
             f"refund of ${amount:.2f} needs human approval: over the "
             f"${settings.refund_approval_threshold:.0f} auto-approval threshold",
         )
-    return _allow("refund_within_policy", f"refund {amount} within policy")
+    return _allow("refund_within_policy", f"refund of ${amount:.2f} is within policy")
 
 
 def _credit_policy(args: dict[str, Any], direct_limit: float) -> PolicyDecision:
@@ -184,7 +184,9 @@ def _credit_policy(args: dict[str, Any], direct_limit: float) -> PolicyDecision:
             f"goodwill credit of ${amount:.2f} needs human approval: over the "
             f"${direct_limit:.0f} direct-apply limit",
         )
-    return _allow("credit_within_limit", f"credit {amount} within direct-apply limit")
+    return _allow(
+        "credit_within_limit", f"credit of ${amount:.2f} is within the direct-apply limit"
+    )
 
 
 def _address_policy(args: dict[str, Any], identity_verified: bool | None) -> PolicyDecision:

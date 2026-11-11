@@ -51,6 +51,7 @@ function EscalationCard({
       onResolved();
     } catch (x) {
       setErr((x as Error).message);
+    } finally {
       setBusy(false);
     }
   }
