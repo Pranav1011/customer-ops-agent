@@ -295,6 +295,6 @@ def get_job(job_id: str) -> dict[str, Any] | None:
             "run_id": job.run_id,
             "error": job.error,
             "result": job.result or None,
-            "created_at": job.created_at.isoformat(),
-            "updated_at": job.updated_at.isoformat(),
+            "created_at": _as_utc(job.created_at).isoformat(),
+            "updated_at": _as_utc(job.updated_at).isoformat(),
         }

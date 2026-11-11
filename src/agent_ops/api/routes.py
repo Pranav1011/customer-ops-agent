@@ -20,6 +20,12 @@ from agent_ops.backend.models import ActionLog, Escalation, Job, Ticket, TraceRe
 router = APIRouter()
 
 
+def _iso_utc(ts: datetime) -> str:
+    """ISO 8601 with an explicit UTC offset. SQLite hands datetimes back naive, and
+    a bare timestamp is read as local time by browsers."""
+    return (ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)).isoformat()
+
+
 class SubmitTicket(BaseModel):
     body: str = Field(description="The customer's message")
     customer_id: str | None = None
@@ -213,7 +219,7 @@ def get_ticket(ticket_id: str) -> dict[str, Any]:
             "intent": t.intent,
             "resolution_status": t.resolution_status,
             "run_id": t.run_id,
-            "created_at": t.created_at.isoformat(),
+            "created_at": _iso_utc(t.created_at),
         }
 
 
@@ -285,7 +291,7 @@ def list_escalations(status: str = "open", limit: int = 50) -> dict[str, Any]:
                     "reason": e.reason,
                     "context": e.context,
                     "status": e.status,
-                    "created_at": e.created_at.isoformat(),
+                    "created_at": _iso_utc(e.created_at),
                 }
                 for e in rows
             ],

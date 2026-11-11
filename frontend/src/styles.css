@@ -120,8 +120,27 @@ body {
 .tabs button:hover { color: var(--text); }
 .tabs button[data-active="true"] { color: #14100b; background: var(--accent); }
 
+.pill[data-offline="true"] { color: var(--danger); border-color: var(--danger-tint); }
+.pill[data-offline="true"] .dot { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-tint); }
+
+/* API outage: keep the last good data on screen, visibly marked stale */
+.app[data-offline="true"] { grid-template-rows: auto auto 1fr; }
+.offline-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 22px;
+  background: var(--danger-tint); border-bottom: 1px solid var(--danger-tint);
+  color: var(--text); font-size: 13px;
+}
+.offline-banner strong { color: var(--danger); font-weight: 600; }
+.offline-banner .dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger); box-shadow: 0 0 0 3px var(--danger-tint);
+}
+.offline-banner .btn { margin-left: auto; font-size: 12px; padding: 4px 11px; }
+
 /* ---------------- layout ---------------- */
-.main { min-height: 0; overflow: hidden; }
+.main { min-height: 0; overflow: hidden; transition: opacity 0.2s var(--ease), filter 0.2s var(--ease); }
+.main[data-stale="true"] { opacity: 0.6; filter: saturate(0.4); }
 .split {
   height: 100%;
   display: grid;

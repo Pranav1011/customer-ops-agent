@@ -1,14 +1,54 @@
+import { useSyncExternalStore } from "react";
 import type { Escalation, QueueTicket, TicketResult, Trace } from "./types";
 
 const BASE: string =
   (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API ??
   "http://127.0.0.1:8000";
 
+/** Whether the API answered the last request. Owned here; every request updates it. */
+export type Reachability = "online" | "offline";
+
+let reachability: Reachability = "online";
+const listeners = new Set<() => void>();
+
+function setReachability(next: Reachability) {
+  if (next === reachability) return;
+  reachability = next;
+  listeners.forEach((l) => l());
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function useReachability(): Reachability {
+  return useSyncExternalStore(subscribe, () => reachability);
+}
+
+/** The request never got an HTTP response: the API is down or unreachable. */
+export class NetworkError extends Error {
+  constructor(path: string) {
+    super(`API not reachable — ${path}`);
+    this.name = "NetworkError";
+  }
+}
+
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    });
+  } catch {
+    setReachability("offline");
+    throw new NetworkError(path);
+  }
+  // Any HTTP response, error statuses included, means the API is up.
+  setReachability("online");
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${path}`);
   return res.json() as Promise<T>;
 }

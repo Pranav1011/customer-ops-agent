@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { api } from "../api";
 import type { TicketResult } from "../types";
 
@@ -9,9 +9,27 @@ const SAMPLES: { label: string; body: string; customer_id: string }[] = [
   { label: "Cancel subscription", body: "Please cancel my subscription, it's too expensive.", customer_id: "CUST-00002" },
 ];
 
-export function TicketComposer({ open, onResolved }: { open: boolean; onResolved: (r: TicketResult) => void }) {
-  const [body, setBody] = useState("");
-  const [customer, setCustomer] = useState("CUST-00001");
+export interface Draft {
+  body: string;
+  customer: string;
+}
+
+export const EMPTY_DRAFT: Draft = { body: "", customer: "CUST-00001" };
+
+/** The draft is owned by the caller, so it survives tab switches and API outages. */
+export function TicketComposer({
+  open,
+  draft,
+  onDraft,
+  onResolved,
+}: {
+  open: boolean;
+  draft: Draft;
+  onDraft: Dispatch<SetStateAction<Draft>>;
+  onResolved: (r: TicketResult) => void;
+}) {
+  const { body, customer } = draft;
+  const setBody = (b: string) => onDraft((d) => ({ ...d, body: b }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -49,7 +67,7 @@ export function TicketComposer({ open, onResolved }: { open: boolean; onResolved
           <div className="field-row">
             <div className="field">
               <label>Customer ID</label>
-              <input className="input" value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="CUST-00001" />
+              <input className="input" value={customer} onChange={(e) => onDraft((d) => ({ ...d, customer: e.target.value }))} placeholder="CUST-00001" />
             </div>
             <div className="field" style={{ justifyContent: "flex-end" }}>
               <label>&nbsp;</label>
@@ -68,8 +86,7 @@ export function TicketComposer({ open, onResolved }: { open: boolean; onResolved
                 className="btn ghost"
                 style={{ fontSize: 11, padding: "4px 9px" }}
                 onClick={() => {
-                  setBody(s.body);
-                  setCustomer(s.customer_id);
+                  onDraft({ body: s.body, customer: s.customer_id });
                 }}
               >
                 {s.label}

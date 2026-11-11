@@ -85,8 +85,8 @@ export function viewEvent(ev: TraceEvent): EventView {
 function guardTitle(ev: TraceEvent): string {
   if (ev.decision === "sanitize_input") return "sanitized untrusted input";
   if (ev.decision === "stop") return `budget stop · ${ev.reason ?? ""}`;
-  if (ev.tool) return `${ev.effect} · ${ev.tool}`;
-  return ev.rule ?? "policy";
+  if (ev.tool) return `${ev.effect ?? ev.decision} · ${ev.tool}`;
+  return ev.rule ?? ev.decision ?? "policy";
 }
 
 function fmtConf(c?: number): string {

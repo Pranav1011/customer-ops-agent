@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, useReachability } from "./api";
 import { Escalations } from "./components/Escalations";
-import { TicketComposer } from "./components/TicketComposer";
+import { EMPTY_DRAFT, TicketComposer, type Draft } from "./components/TicketComposer";
 import { TraceViewer } from "./components/TraceViewer";
 import type { Escalation, QueueTicket } from "./types";
 import { StatusChip } from "./ui";
@@ -9,6 +9,7 @@ import { StatusChip } from "./ui";
 type Tab = "queue" | "escalations";
 
 const RECONNECT_MS = 3000;
+const HEARTBEAT_MS = 5000;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("queue");
@@ -17,11 +18,14 @@ export default function App() {
   const [provider, setProvider] = useState<string>("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
-  const [offline, setOffline] = useState(false);
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null);
+  const offline = useReachability() === "offline";
 
   const refreshQueue = useCallback(async () => {
     const q = await api.queue();
     setTickets(q.tickets);
+    setSyncedAt(new Date());
     return q.tickets;
   }, []);
 
@@ -30,8 +34,8 @@ export default function App() {
     setEscalations(e.escalations);
   }, []);
 
-  // Connect to the API. Any successful round trip clears `offline`, so the
-  // console recovers on its own once the backend comes up.
+  // (Re)load everything. Reachability lives in the api layer: a network error on
+  // any request flips the console offline, and any HTTP response flips it back.
   const connecting = useRef(false);
   const connect = useCallback(async () => {
     if (connecting.current) return;
@@ -40,9 +44,8 @@ export default function App() {
       const h = await api.health();
       setProvider(h.llm_provider);
       await Promise.all([refreshQueue(), refreshEscalations()]);
-      setOffline(false);
     } catch {
-      setOffline(true);
+      // Offline is reported by useReachability; HTTP errors leave the last good data on screen.
     } finally {
       connecting.current = false;
     }
@@ -52,20 +55,35 @@ export default function App() {
     connect();
   }, [connect]);
 
+  // Offline: retry every few seconds; the first answer brings the console back.
+  // Online: a light heartbeat, so an outage shows even while nobody is clicking.
   useEffect(() => {
-    if (!offline) return;
-    const t = setInterval(connect, RECONNECT_MS);
+    if (offline) {
+      const t = setInterval(connect, RECONNECT_MS);
+      return () => clearInterval(t);
+    }
+    const t = setInterval(() => api.health().catch(() => undefined), HEARTBEAT_MS);
     return () => clearInterval(t);
+  }, [offline, connect]);
+
+  // Coming back online reloads the data that went stale during the outage.
+  const wasOffline = useRef(false);
+  useEffect(() => {
+    if (offline) wasOffline.current = true;
+    else if (wasOffline.current) {
+      wasOffline.current = false;
+      connect();
+    }
   }, [offline, connect]);
 
   const selected = tickets.find((t) => t.ticket_id === selectedId) ?? null;
 
   const resolvedCount = tickets.filter((t) => t.resolution_status === "resolved").length;
 
-  if (offline) {
+  if (offline && !syncedAt) {
     return (
       <div className="app">
-        <Topbar provider="offline" resolved={0} open={0} escalations={0} tab={tab} setTab={setTab} />
+        <Topbar provider="offline" resolved={0} open={0} escalations={0} tab={tab} setTab={setTab} offline />
         <div className="main">
           <div className="empty">
             <div className="glyph">!</div>
@@ -84,16 +102,29 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-offline={offline}>
       <Topbar
-        provider={provider}
+        provider={offline ? "offline" : provider}
         resolved={resolvedCount}
         open={tickets.length}
         escalations={escalations.length}
         tab={tab}
         setTab={setTab}
+        offline={offline}
       />
-      <div className="main">
+      {offline && syncedAt && (
+        <div className="offline-banner" role="status">
+          <span className="dot" />
+          <span>
+            <strong>API not reachable.</strong> Showing data from {syncedAt.toLocaleTimeString()} — it may be out of
+            date. Reconnecting every few seconds.
+          </span>
+          <button className="btn ghost" onClick={connect}>
+            Retry now
+          </button>
+        </div>
+      )}
+      <div className="main" data-stale={offline}>
         {tab === "queue" ? (
           <div className="split">
             <div className="col list">
@@ -107,6 +138,8 @@ export default function App() {
               </div>
               <TicketComposer
                 open={composerOpen}
+                draft={draft}
+                onDraft={setDraft}
                 onResolved={async (r) => {
                   setComposerOpen(false);
                   await Promise.all([refreshQueue(), refreshEscalations()]);
@@ -174,6 +207,7 @@ function Topbar({
   escalations,
   tab,
   setTab,
+  offline = false,
 }: {
   provider: string;
   resolved: number;
@@ -181,6 +215,7 @@ function Topbar({
   escalations: number;
   tab: Tab;
   setTab: (t: Tab) => void;
+  offline?: boolean;
 }) {
   return (
     <header className="topbar">
@@ -203,7 +238,7 @@ function Topbar({
         <span>
           {resolved}/{open} resolved
         </span>
-        <span className="pill">
+        <span className="pill" data-offline={offline}>
           <span className="dot" style={{ display: "inline-block", marginRight: 6 }} />
           reasoner: {provider || "…"}
         </span>

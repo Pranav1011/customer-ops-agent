@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, NetworkError, useReachability } from "../api";
 import type { QueueTicket, Trace, TraceEvent } from "../types";
 import { StatusChip, viewEvent } from "../ui";
 
@@ -48,22 +48,35 @@ export function TraceViewer({ ticket, onChanged }: { ticket: QueueTicket; onChan
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The trace load hit an outage; load it again once the API is back.
+  const [missed, setMissed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const online = useReachability() === "online";
 
   useEffect(() => {
     let alive = true;
     setTrace(null);
     setErr(null);
+    setMissed(false);
     if (!ticket.run_id) return;
     setLoading(true);
     api
       .trace(ticket.run_id)
       .then((t) => alive && setTrace(t))
-      .catch((e) => alive && setErr((e as Error).message))
+      .catch((e) => {
+        if (!alive) return;
+        if (e instanceof NetworkError) setMissed(true);
+        else setErr((e as Error).message);
+      })
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [ticket.run_id, ticket.ticket_id]);
+  }, [ticket.run_id, ticket.ticket_id, attempt]);
+
+  useEffect(() => {
+    if (online && missed) setAttempt((a) => a + 1);
+  }, [online, missed]);
 
   async function runAgent() {
     setRunning(true);
@@ -88,7 +101,7 @@ export function TraceViewer({ ticket, onChanged }: { ticket: QueueTicket; onChan
       <div className="detail-head">
         <div>
           <div className="id">{ticket.ticket_id}</div>
-          <h1>{ticket.subject || (trace?.intent ?? "Ticket")}</h1>
+          <h1>{ticket.subject || trace?.intent || ticket.intent || "Ticket"}</h1>
         </div>
         <div className="spacer" />
         <button className="btn ghost" onClick={runAgent} disabled={running} title="Run the agent again on the current brain">
@@ -117,6 +130,8 @@ export function TraceViewer({ ticket, onChanged }: { ticket: QueueTicket; onChan
         </div>
       ) : loading ? (
         <div className="skeleton">loading trace…</div>
+      ) : missed ? (
+        <div className="skeleton">trace loads when the API is back…</div>
       ) : trace ? (
         <>
           <div className="request">
