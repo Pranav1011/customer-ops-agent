@@ -46,6 +46,18 @@ _LOGGED_REPLY = (
         ("The delivery address has been updated to 1 Main St.", "update_shipping_address"),
         ("We've applied a $10 account credit.", "apply_account_credit"),
         ("A credit has been applied to your account.", "apply_account_credit"),
+        # Review findings: amounts, simple past, "was", bare headlines, promises.
+        ("We've issued a $20 refund", "issue_refund"),
+        ("We refunded you yesterday", "issue_refund"),
+        ("The refund was processed", "issue_refund"),
+        ("Refund approved", "issue_refund"),
+        ("We've credited your account", "apply_account_credit"),
+        ("We've reversed the charge", "issue_refund"),
+        ("I went ahead and cancelled", "cancel_subscription"),
+        ("you will see the refund in 3-5 days", "issue_refund"),
+        ("your refund of $29 is on its way", "issue_refund"),
+        ("You can expect to see the refund amount credited back within 5-7 days.", "issue_refund"),
+        ("Your subscription was cancelled.", "cancel_subscription"),
     ],
 )
 def test_completed_action_without_a_write_is_unbacked(reply, tool):
@@ -74,10 +86,70 @@ def test_a_different_write_does_not_back_the_claim():
         "I can request a refund, and a specialist will confirm it.",
         "Thanks for reaching out. I've routed your request to a specialist on our team.",
         "I took a close look at the payments and didn't find a duplicate charge.",
+        "If approved, you will see the refund in 3-5 days.",
+        "We can't refund this order until a specialist reviews it.",
     ],
 )
 def test_future_conditional_and_neutral_wording_is_not_a_claim(reply):
     assert unbacked_action_claims(reply, []) == []
+
+
+def _read(tool: str, data: dict) -> dict:
+    return {"tool": tool, "args": {}, "result": {"ok": True, "data": data, "error": None}}
+
+
+_REFUNDED_PAYMENT = _read(
+    "get_payment_history",
+    {"payments": [{"payment_id": "RFN-1", "order_id": "ORD-1", "status": "refunded"}]},
+)
+_REFUNDED_ORDER = _read("get_order", {"order_id": "ORD-1", "refunded_amount": 29.0})
+_CANCELLED_SUB = _read(
+    "get_subscription",
+    {"subscriptions": [{"subscription_id": "SUB-1", "status": "cancelled"}], "count": 1},
+)
+_ACTIVE_SUB = _read(
+    "get_subscription",
+    {"subscriptions": [{"subscription_id": "SUB-1", "status": "active"}], "count": 1},
+)
+_PAID_ORDER = _read("get_order", {"order_id": "ORD-1", "refunded_amount": 0.0})
+
+_HISTORY_REPLIES = [
+    ("Your previous refund has already been processed on Oct 3", "issue_refund", _REFUNDED_PAYMENT),
+    ("Your subscription has been cancelled as of Oct 3", "cancel_subscription", _CANCELLED_SUB),
+    (
+        "Order ORD-1 has been refunded previously, so I can't refund again",
+        "issue_refund",
+        _REFUNDED_ORDER,
+    ),
+]
+
+
+@pytest.mark.parametrize(("reply", "tool", "evidence"), _HISTORY_REPLIES)
+def test_history_backed_by_a_read_is_not_a_claim(reply, tool, evidence):
+    assert unbacked_action_claims(reply, [], [evidence]) == []
+
+
+@pytest.mark.parametrize(("reply", "tool", "evidence"), _HISTORY_REPLIES)
+def test_history_without_read_evidence_is_still_a_claim(reply, tool, evidence):
+    assert unbacked_action_claims(reply, []) == [tool]
+    contrary = _ACTIVE_SUB if tool == "cancel_subscription" else _PAID_ORDER
+    assert unbacked_action_claims(reply, [], [contrary]) == [tool]
+
+
+def test_read_evidence_does_not_excuse_a_claim_without_history_wording():
+    assert unbacked_action_claims(
+        "We've refunded the duplicate charge.", [], [_REFUNDED_PAYMENT]
+    ) == ["issue_refund"]
+
+
+def test_a_failed_read_is_not_evidence():
+    failed = {
+        "tool": "get_order",
+        "args": {},
+        "result": {"ok": False, "data": {"refunded_amount": 5}},
+    }
+    reply = "Your previous refund has already been processed on Oct 3"
+    assert unbacked_action_claims(reply, [], [failed]) == ["issue_refund"]
 
 
 # --------------------------------------------------------------------------- #
@@ -161,3 +233,41 @@ def test_claim_backed_by_a_refund_in_this_run_is_left_alone():
     assert not _guard_fired(final)
     assert final["escalated"] is False
     assert final["resolution"]["customer_reply"] == f"We've refunded $1.00 on order {oid}."
+
+
+def test_refund_status_answer_backed_by_a_read_is_left_alone():
+    with session_scope() as s:
+        order = next(o for o in s.exec(select(Order)).all() if o.refunded_amount == 0)
+        oid, cid = order.id, order.customer_id
+        order.refunded_amount = 5.0
+        s.add(order)
+
+    class StatusAnswer(_StubProvider):
+        fetched = False
+
+        def decide(self, view):
+            if not self.fetched:
+                self.fetched = True
+                return Decision(
+                    action=DecisionAction.call_tool,
+                    tool="get_order",
+                    args={"order_id": oid},
+                    confidence=1.0,
+                )
+            return Decision(action=DecisionAction.finish)
+
+        def compose_reply(self, view):
+            return (
+                f"Order {oid} was already refunded previously, so there's nothing more to refund."
+            )
+
+    try:
+        final = _run_with(StatusAnswer(), run_id="claim-history", customer_id=cid)
+    finally:
+        with session_scope() as s:
+            restored = s.get(Order, oid)
+            restored.refunded_amount = 0.0
+            s.add(restored)
+    assert not _guard_fired(final)
+    assert final["escalated"] is False
+    assert final["resolution"]["customer_reply"].startswith(f"Order {oid} was already refunded")

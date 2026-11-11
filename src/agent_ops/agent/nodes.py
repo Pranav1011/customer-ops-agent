@@ -441,7 +441,9 @@ def resolve(state: AgentState, config: RunnableConfig) -> AgentState:
     # address change or credit is done if that write succeeded in this run. A real
     # model can draft "we've processed your refund" on a run that escalated before
     # any write; that reply is replaced, and an unescalated run escalates.
-    unbacked = unbacked_action_claims(reply, state.get("actions_taken", []))
+    unbacked = unbacked_action_claims(
+        reply, state.get("actions_taken", []), state.get("scratchpad", [])
+    )
     if unbacked:
         _event(
             state,
